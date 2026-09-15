@@ -37,7 +37,11 @@ neuralmind = "neuralmind.cli:main"
 include = ["neuralmind*"]
 
 [tool.setuptools.package-data]
-neuralmind = ["knowledge/rules/*.lp", "knowledge/ontology/*.ttl"]
+neuralmind = [
+  "knowledge/rules/*.lp",
+  "perception/weights/*.npz",
+  "perception/weights/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

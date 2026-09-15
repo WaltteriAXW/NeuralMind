@@ -15,7 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError as exc:  # pragma: no cover - environment dependent
+    raise ImportError(
+        "this layer needs NumPy. Install it with `pip install 'neuralmind[numeric]'`. "
+        "The symbolic core and the text perception layer work without it."
+    ) from exc
 
 __all__ = [
     "load_mnist",

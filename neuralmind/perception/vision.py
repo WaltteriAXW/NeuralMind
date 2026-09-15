@@ -17,7 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError as exc:  # pragma: no cover - environment dependent
+    raise ImportError(
+        "this layer needs NumPy. Install it with `pip install 'neuralmind[numeric]'`. "
+        "The symbolic core and the text perception layer work without it."
+    ) from exc
 
 from ..core.terms import Atom, Const
 from ..knowledge.base import FactRecord
@@ -153,4 +159,5 @@ class SlotDistribution:
 
     def __str__(self) -> str:
         best_value, best_probability = self.best
-        return f"{self.predicate}{self.key} = {best_value} (p={best_probability:.3f})"
+        key = ", ".join(str(part) for part in self.key)
+        return f"{self.predicate}({key}) = {best_value} (p={best_probability:.3f})"
