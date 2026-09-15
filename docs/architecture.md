@@ -105,6 +105,39 @@ ASCII for a terminal. `nlg.py` is a deterministic template realiser in the
 spirit of SimpleNLG: articles, agreement, capitalisation, list punctuation, and
 nothing more. It generates no text it was not given a template for.
 
+## 6. Learning (`neuralmind/learning/`)
+
+Every other layer runs the logic forward. This one runs it backward, and it is
+what turns a reasoning system into a learning one.
+
+For a program with neural predicates over a finite domain, the probability that
+a query follows is a weighted model count: sum, over the assignments that
+entail the query, of the product of their per-slot probabilities. The *set* of
+entailing assignments depends only on the rules, not on the probabilities, so
+it is computed once by the symbolic engine and stored as a boolean **truth
+tensor** with one axis per neural predicate.
+
+After that the whole thing is multilinear. The probability is a tensor
+contraction, and the derivative with respect to any slot is the same
+contraction with that slot's axis left out. Both are a few lines of `tensordot`,
+and both are exact -- the tests check them against finite differences at 1e-10.
+
+This is what DeepProbLog and Scallop compile to arithmetic circuits to compute.
+Here the circuit is a dense tensor, which is the right representation when the
+domain is small and the wrong one when it is large. The cost is
+`|domain| ** slots`; `SemanticLoss` refuses to build a table past `max_table`
+rather than quietly exhausting memory, and says so in the error.
+
+Integrity constraints shape the gradient too: an assignment that violates a
+hard rule contributes nothing to the count, so the network is never pushed
+toward a reading the rules forbid.
+
+**What this buys.** `scripts/train_weak_supervision.py` trains the digit
+classifier on image pairs labelled only with their sum. No digit label is used
+at any point. The gradient of P(sum = s) through
+`sum(S) :- digit(d0, A), digit(d1, B), S = A + B.` is the entire training
+signal, and it is enough.
+
 ## Design decisions worth knowing
 
 **Why a hand-written engine when clingo exists.** Proof trees. clingo gives
@@ -118,3 +151,10 @@ is the difference between a clear message and a wrong answer nobody notices.
 **Why perception never concludes anything.** Every conclusion comes from a rule,
 so every conclusion has a proof. The moment perception is allowed to infer, the
 proof tree stops being complete.
+
+**Why the truth tensor rather than circuit compilation.** Compiling to an SDD is
+the scalable answer and the reason DeepProbLog can handle larger programs. A
+dense tensor is exact, twenty lines, and obviously correct by inspection --
+which matters more here, where the engine that fills it is the thing being
+trusted. The limit is stated in the error message rather than discovered in
+production.

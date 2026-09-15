@@ -13,7 +13,15 @@ from .knowledge.base import KnowledgeBase
 from .output.render import render_model, render_proof
 from .output.serialize import to_json
 
-__all__ = ["REGISTRY", "demo_family", "demo_text", "demo_mnist", "demo_repair", "demo_policy"]
+__all__ = [
+    "REGISTRY",
+    "demo_family",
+    "demo_text",
+    "demo_mnist",
+    "demo_repair",
+    "demo_policy",
+    "demo_learn",
+]
 
 RULE = "-" * 72
 
@@ -176,6 +184,63 @@ def demo_repair(json_output: bool = False) -> int:
     return 0
 
 
+def demo_learn(json_output: bool = False) -> int:
+    """Beyond the roadmap: learn perception from what the rules entail."""
+    _heading("Learning digits from sums alone", "gradients through the logic")
+    try:
+        from .datasets.mnist import digit_pairs, load_mnist
+        from .learning.semantic_loss import NeuralPredicate, SemanticLoss
+        from .learning.weak import WeaklySupervisedTrainer, WeakExample
+        from .perception.nn import ConvNet
+    except ImportError as exc:  # pragma: no cover
+        print(f"needs NumPy: {exc}", file=sys.stderr)
+        return 2
+    try:
+        train, test = load_mnist()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    pairs = digit_pairs(train, 1500, seed=5)
+    examples = [
+        WeakExample(images=pair.images, query=f"sum({pair.total})") for pair in pairs
+    ]
+    kb = KnowledgeBase("sum").load_builtin("mnist_sum")
+    slots = [
+        NeuralPredicate.over_integers("digit", "d0", 10),
+        NeuralPredicate.over_integers("digit", "d1", 10),
+    ]
+    loss = SemanticLoss(kb, slots)
+    network = ConvNet(seed=0)
+    trainer = WeaklySupervisedTrainer(network, loss, learning_rate=2e-3)
+
+    print("the rule that supplies the supervision:")
+    print("  sum(S) :- digit(d0, A), digit(d1, B), S = A + B.\n")
+    print(f"training on {len(examples)} image pairs labelled only with their sum.")
+    print("the network is never shown a digit label -- not once.\n")
+
+    held_images, held_labels = test.images[:1000], test.labels[:1000]
+    print(f"digit accuracy before training: {network.accuracy(held_images, held_labels):.3f}")
+
+    def validate():
+        return network.accuracy(held_images, held_labels), 0.0
+
+    report = trainer.fit(
+        examples, epochs=3, batch_size=32, validation=validate, verbose=False
+    )
+    for epoch, (value, accuracy) in enumerate(zip(report.losses, report.slot_accuracies), 1):
+        print(f"  epoch {epoch}: loss {value:.4f}, digit accuracy {accuracy:.3f}")
+
+    print(f"\ndigit labels used in training: {report.labels_seen}")
+    print(f"digit accuracy after training:  {report.final_slot_accuracy:.3f}")
+    print(f"symbolic engine calls in total: {loss.engine_calls}")
+    print(
+        "\nThe gradient of P(sum = s) through the rule is the only signal there was."
+    )
+    print("Run scripts/train_weak_supervision.py for the full-length version.")
+    return 0
+
+
 def demo_policy(json_output: bool = False) -> int:
     """Phase 6: the domain pilot -- an auditable access-control decision."""
     _heading("Access-policy compliance", "Phase 6 - domain pilot")
@@ -240,4 +305,5 @@ REGISTRY: dict[str, Callable[..., int]] = {
     "mnist": demo_mnist,
     "repair": demo_repair,
     "policy": demo_policy,
+    "learn": demo_learn,
 }

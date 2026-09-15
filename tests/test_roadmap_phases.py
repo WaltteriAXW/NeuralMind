@@ -158,3 +158,36 @@ def test_phase_7_failures_are_attributed_not_just_counted():
     assert all(outcome.failure for outcome in report.failures)
     assert report.failure_breakdown().get(ENGINE, 0) == 0
     assert "perception" in report.describe() or "no failures" in report.describe()
+
+
+@vision
+@pytest.mark.slow
+def test_beyond_the_roadmap_learning_without_labels():
+    """Sum-only supervision teaches digits: no digit label is ever used."""
+    import numpy as np
+
+    from neuralmind.learning import (
+        NeuralPredicate, SemanticLoss, WeaklySupervisedTrainer, WeakExample,
+    )
+    from neuralmind.perception.nn import ConvNet
+
+    train, test = load_mnist()
+    pairs = digit_pairs(train, 1500, seed=5)
+    examples = [WeakExample(images=p.images, query=f"sum({p.total})") for p in pairs]
+
+    kb = KnowledgeBase("sum").load_builtin("mnist_sum")
+    slots = [
+        NeuralPredicate.over_integers("digit", "d0", 10),
+        NeuralPredicate.over_integers("digit", "d1", 10),
+    ]
+    network = ConvNet(seed=0)
+    trainer = WeaklySupervisedTrainer(network, SemanticLoss(kb, slots), learning_rate=2e-3)
+
+    held_images, held_labels = test.images[:1000], test.labels[:1000]
+    before = network.accuracy(held_images, held_labels)
+    report = trainer.fit(examples, epochs=2, batch_size=32, verbose=False)
+    after = network.accuracy(held_images, held_labels)
+
+    assert report.labels_seen == 0, "the trainer must never consume a digit label"
+    assert after > 0.80, f"digit accuracy only reached {after:.3f}"
+    assert after > before + 0.5, "the logic supplied no usable signal"

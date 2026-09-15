@@ -37,15 +37,15 @@ licensing section recommends this: CoreNLP is GPL, and a subject/verb/object
 extraction over spaCy's parse keeps the whole stack MIT/Apache. Done as
 recommended.
 
-**Scallop / LTNtorch → a fuzzy layer implemented here.** The blueprint flags both
-as research-grade with slowing maintenance, and says to confirm Scallop's
-licence before depending on it. The Type 5 semantics needed here are the Real
-Logic connectives and the `forall` aggregator, which are about 150 lines; the
-repair step is exact weighted model counting, which is another 80. Implementing
-them directly removed a dependency the blueprint itself was cautious about, and
-the connectives stay configurable. A gradient-based version — training the
-perception model through the logic — is where a real Scallop or LTNtorch
-integration would earn its place, and that is not built here.
+**Scallop / LTNtorch → implemented directly.** The blueprint flags both as
+research-grade with slowing maintenance, and says to confirm Scallop's licence
+before depending on it. The Type 5 semantics needed here are the Real Logic
+connectives and the `forall` aggregator, about 150 lines; inference-time repair
+is exact weighted model counting, another 80; and training-time gradients are a
+truth tensor plus two contractions, in `neuralmind/learning/`. Implementing them
+directly removed a dependency the blueprint was itself cautious about, and kept
+the connectives configurable. What a real Scallop integration would still buy is
+scale — circuit compilation instead of a dense tensor.
 
 **PyTorch → NumPy.** For a 13k-parameter CNN the difference does not matter, and
 the pipeline stays installable with no heavy dependency. Swapping in a torch
@@ -56,11 +56,20 @@ changes.
 needed here is articles, agreement, capitalisation and list punctuation, which
 is small enough to do directly and keeps the stack to one language.
 
-## What is genuinely not built
+## Beyond the roadmap: gradients through the logic
 
-- **Gradient flow through the logic.** The Type 5 layer checks and repairs at
-  inference time; it does not train the CNN through the rules. That is the
-  DeepProbLog/Scallop capability proper.
+The blueprint stops at Phase 7, and the Type 5 layer as specified checks and
+repairs at *inference* time. `neuralmind/learning/` adds the training-time
+counterpart -- the DeepProbLog/Scallop capability proper -- by exact weighted
+model counting over a truth tensor the symbolic engine fills.
+
+The demonstration is MNIST addition with **sum-only supervision**: pairs of
+images labelled with their sum and never with a digit. See the measured result
+in the README. It matters because it answers the obvious objection to a Type 3
+pipeline -- that the neural and symbolic halves must be trained separately, and
+that the perception layer therefore needs its own labelled data. It does not.
+
+## What is genuinely not built
 - **Vision beyond digits.** No Detectron2 or SAM integration. The perceptor
   interface takes any model with `predict_proba`, so the work is wiring, not
   architecture.

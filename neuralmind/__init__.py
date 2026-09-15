@@ -44,6 +44,19 @@ from .output.serialize import to_json
 from .perception.base import Perception
 from .pipeline import NeuralMindPipeline, PipelineResult
 
+
+def __getattr__(name: str):
+    """Expose the learning layer without making NumPy a hard dependency."""
+    if name in ("SemanticLoss", "NeuralPredicate"):
+        from . import learning
+
+        return getattr(learning, name)
+    if name in ("WeaklySupervisedTrainer", "WeakExample"):
+        from .learning import weak
+
+        return getattr(weak, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 __all__ = [
     "__version__",
     # pipeline
@@ -72,6 +85,11 @@ __all__ = [
     "ConsistencyLayer",
     "ConsistencyReport",
     "FuzzySemantics",
+    # learning (needs NumPy; imported on demand)
+    "SemanticLoss",
+    "NeuralPredicate",
+    "WeaklySupervisedTrainer",
+    "WeakExample",
     # perception and output
     "Perception",
     "Realiser",
