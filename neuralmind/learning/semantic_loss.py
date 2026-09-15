@@ -111,7 +111,9 @@ class SemanticLoss:
         entailing the query, so hard rules shape the gradient too.
     slots:
         One :class:`NeuralPredicate` per uncertain input, in the same order as
-        the rows of the probability matrix passed to the methods below.
+        the rows of the probability matrix passed to the methods below. All
+        slots must share a domain size, because those probabilities arrive as
+        one rectangular array from one network's output layer.
     max_table:
         Refuse to build a truth tensor with more than this many entries.
     """
@@ -125,6 +127,16 @@ class SemanticLoss:
     def __post_init__(self) -> None:
         if not self.slots:
             raise ValueError("SemanticLoss needs at least one neural predicate")
+        domains = {slot.size for slot in self.slots}
+        if len(domains) > 1:
+            # Probabilities arrive as one rectangular array, one row per slot,
+            # because they come from one network's output layer.
+            raise ValueError(
+                "every slot must range over the same number of values, since "
+                "probabilities are passed as a (slots, domain) array; got sizes "
+                f"{[slot.size for slot in self.slots]}. Pad the domains, or use "
+                "one SemanticLoss per group of same-sized slots."
+            )
         size = 1
         for slot in self.slots:
             size *= slot.size

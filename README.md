@@ -85,6 +85,7 @@ neuralmind demo text     # Phase 3: English → facts and rules → proof
 neuralmind demo mnist    # Phase 1: a CNN reads two digits, the logic adds them
 neuralmind demo repair   # Phase 4: hard rules correct a misread digit
 neuralmind demo policy   # Phase 6: an auditable access-control decision
+neuralmind demo learn    # beyond the roadmap: learn digits from sums alone
 neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 ```
 
@@ -102,6 +103,48 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
+
+## Learning through the logic
+
+The roadmap stops at a system that *reasons*. The `learning/` layer makes it one
+that *learns*, by running the rules backward.
+
+For a program with neural predicates over a finite domain, the probability that
+a query follows is a weighted model count. Which assignments entail the query
+depends only on the rules, not on the network — so the symbolic engine computes
+that once into a boolean **truth tensor**, one axis per uncertain input. After
+that the count is a tensor contraction and its gradient is the same contraction
+with one axis left out. Both exact; the tests check them against finite
+differences at 1e-10.
+
+The demonstration is the one that makes the point sharpest — a digit classifier
+trained on image pairs labelled **only with their sum**, never with a digit:
+
+```console
+$ neuralmind demo learn
+
+the rule that supplies the supervision:
+  sum(S) :- digit(d0, A), digit(d1, B), S = A + B.
+
+training on 1500 image pairs labelled only with their sum.
+the network is never shown a digit label -- not once.
+
+digit accuracy before training: 0.097
+  epoch 1: loss 2.1296, digit accuracy 0.835
+  epoch 2: loss 0.5662, digit accuracy 0.915
+  epoch 3: loss 0.3331, digit accuracy 0.930
+
+digit labels used in training: 0
+symbolic engine calls in total: 1900
+```
+
+Those 1,900 calls are the whole symbolic cost: 19 possible sums × 100 possible
+digit pairs, computed once and cached. The gradient of `P(sum = s)` through the
+addition rule is the entire training signal.
+
+This answers the obvious objection to a Type 3 pipeline — that the two halves
+must be trained separately, so the perception layer needs its own labelled data.
+It does not. `scripts/train_weak_supervision.py` runs the full-length version.
 
 **Read the Phase 3/7 numbers honestly.** They are measured on generated
 controlled-English problems in the ProofWriter register, not on the real
@@ -121,6 +164,7 @@ them, which is the honest failure mode but still a failure.
 | Perception | `perception/` | A controlled-English grammar (implications, universals, questions), spaCy dependency extraction for freer text, and a ~13k-parameter CNN in NumPy for images. |
 | Consistency | `consistency/` | The Type 5 layer: the same rules evaluated in fuzzy logic over perception confidences, plus repair by exact weighted model counting. |
 | Output | `output/` | JSON, ASCII proof trees, and a deterministic template realiser. |
+| Learning | `learning/` | Runs the rules backward: exact weighted model counting over a truth tensor the engine fills, so a logical consequence becomes a training signal. |
 
 ### The parts worth a closer look
 

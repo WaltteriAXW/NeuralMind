@@ -42,7 +42,7 @@ print(f"P(sum=4) if it reads 1 and 3 confidently: {loss.probability(confident, '
 _, gradient = loss.loss_and_gradient(uniform, "sum(4)")
 print("\nthe gradient tells the network where to put its mass:")
 print(f"  slot 0, value 1: {gradient[0, 1]:+.3f}   (a pair that works -> push up)")
-print(f"  slot 0, value 9: {gradient[0, 9]:+.3f}   (no pair works -> leave alone)")
+print(f"  slot 0, value 9: {gradient[0, 9] + 0.0:+.3f}   (no pair works -> leave alone)")
 
 # --- using it as the only training signal ----------------------------------
 

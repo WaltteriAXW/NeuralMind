@@ -248,3 +248,12 @@ def test_report_records_that_no_slot_labels_were_used():
     from neuralmind.learning.weak import WeakTrainingReport
 
     assert WeakTrainingReport().to_dict()["slot_labels_used_in_training"] == 0
+
+
+def test_slots_must_share_a_domain_size():
+    slots = [
+        NeuralPredicate.over_integers("d", "a", 4),
+        NeuralPredicate.over_integers("d", "b", 7),
+    ]
+    with pytest.raises(ValueError, match="same number of values"):
+        SemanticLoss(KnowledgeBase(), slots)
