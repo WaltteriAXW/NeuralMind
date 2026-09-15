@@ -56,6 +56,8 @@ class WeakTrainingReport:
     final_query_accuracy: float = 0.0
     seconds: float = 0.0
     labels_seen: int = 0  # stays zero; that is the point
+    #: Examples whose label the rules cannot produce at all.
+    unsatisfiable_examples: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +68,7 @@ class WeakTrainingReport:
             "final_slot_accuracy": round(self.final_slot_accuracy, 4),
             "final_query_accuracy": round(self.final_query_accuracy, 4),
             "slot_labels_used_in_training": self.labels_seen,
+            "unsatisfiable_examples": self.unsatisfiable_examples,
             "seconds": round(self.seconds, 1),
         }
 
@@ -98,6 +101,8 @@ class WeaklySupervisedTrainer:
 
     def train_step(self, batch: Sequence[WeakExample]) -> float:
         """One gradient step over a batch. Returns the mean loss."""
+        if not batch:
+            raise ValueError("train_step needs at least one example")
         stacked, shape = self._stack(batch)
         logits = self.network.forward(stacked, training=True)
         probabilities = _softmax(logits)
@@ -183,6 +188,13 @@ class WeaklySupervisedTrainer:
                 print(line, flush=True)
         report.epochs = epochs
         report.seconds = time.time() - started
+        report.unsatisfiable_examples = self.loss.unsatisfiable_queries
+        if report.unsatisfiable_examples and verbose:
+            print(
+                f"warning: {report.unsatisfiable_examples} example(s) had a label "
+                "the rules cannot produce, and contributed nothing to training",
+                flush=True,
+            )
         return report
 
     # -- inference --------------------------------------------------------

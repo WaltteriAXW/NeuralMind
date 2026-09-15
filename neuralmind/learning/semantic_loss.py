@@ -123,6 +123,7 @@ class SemanticLoss:
     max_table: int = 1_000_000
     _cache: dict = field(default_factory=dict, repr=False)
     _engine_calls: int = field(default=0, repr=False)
+    _unsatisfiable: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         if not self.slots:
@@ -246,8 +247,11 @@ class SemanticLoss:
 
         gradient = np.zeros_like(probabilities)
         if total <= EPSILON:
-            # No assignment entails the query. There is no direction that helps,
-            # so report the flat gradient rather than an exploding one.
+            # No assignment entails the query -- the rules and the label
+            # disagree. There is no direction that helps, so the gradient is
+            # flat, which would otherwise be an invisible no-op in a training
+            # loop. Count it so a run can report how often it happened.
+            self._unsatisfiable += 1
             return loss, gradient
         for index in range(len(self.slots)):
             # d P / d p_i = the same contraction with slot i left out.
@@ -297,8 +301,19 @@ class SemanticLoss:
 
     @property
     def engine_calls(self) -> int:
-        """How many times the symbolic engine has run. Useful for the docs."""
+        """How many times the symbolic engine has run."""
         return self._engine_calls
+
+    @property
+    def unsatisfiable_queries(self) -> int:
+        """How many gradient requests had no satisfying assignment at all.
+
+        Anything above zero means some example's label cannot be produced by
+        the rules -- a mislabelled example, a domain that is too small, or a
+        constraint that is too strong. Such an example contributes nothing to
+        training, so this number should be watched rather than ignored.
+        """
+        return self._unsatisfiable
 
 
 def _outer(probabilities: np.ndarray) -> np.ndarray:

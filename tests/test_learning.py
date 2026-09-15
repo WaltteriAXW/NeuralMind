@@ -257,3 +257,24 @@ def test_slots_must_share_a_domain_size():
     ]
     with pytest.raises(ValueError, match="same number of values"):
         SemanticLoss(KnowledgeBase(), slots)
+
+
+def test_unsatisfiable_queries_are_counted_not_silent():
+    kb = KnowledgeBase("sum").load_builtin("mnist_sum")
+    slots = [
+        NeuralPredicate.over_integers("digit", "d0", 10),
+        NeuralPredicate.over_integers("digit", "d1", 10),
+    ]
+    loss = SemanticLoss(kb, slots)
+    assert loss.unsatisfiable_queries == 0
+    loss.loss_and_gradient(np.full((2, 10), 0.1), "sum(99)")
+    loss.loss_and_gradient(np.full((2, 10), 0.1), "sum(7)")
+    assert loss.unsatisfiable_queries == 1
+
+
+def test_an_empty_batch_is_rejected(sum_loss):
+    from neuralmind.learning.weak import WeaklySupervisedTrainer
+    from neuralmind.perception.nn import ConvNet
+
+    with pytest.raises(ValueError, match="at least one example"):
+        WeaklySupervisedTrainer(ConvNet(seed=0), sum_loss).train_step([])
