@@ -11,13 +11,13 @@ this pipeline. The two agree on every program both can run, which
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Sequence
 
 from ..core.program import Program, Rule, Step
 from ..core.terms import Atom, Const, evaluate
 from .model import Justification, Model, Violation, match_atom
 
-__all__ = ["ForwardChainer", "UnsupportedProgram", "ReasoningLimit", "solve"]
+__all__ = ["ForwardChainer", "UnsupportedProgram", "ReasoningLimit", "solve", "match_body"]
 
 
 class UnsupportedProgram(Exception):
@@ -188,44 +188,7 @@ class ForwardChainer:
         self, compiled_rule: _CompiledRule, model: Model
     ) -> Iterator[tuple[dict[str, Const], tuple[Atom, ...], tuple[Atom, ...]]]:
         """Enumerate every way this rule's body is satisfied by the model."""
-        steps = compiled_rule.steps
-
-        def walk(
-            index: int,
-            bindings: dict[str, Const],
-            support: tuple[Atom, ...],
-            negative: tuple[Atom, ...],
-        ) -> Iterator[tuple[dict[str, Const], tuple[Atom, ...], tuple[Atom, ...]]]:
-            if index == len(steps):
-                yield bindings, support, negative
-                return
-            step = steps[index]
-            if step.kind == "match":
-                assert step.literal is not None
-                pattern = step.literal.atom.ground(bindings)
-                for fact in model.candidates(pattern):
-                    extended = match_atom(pattern, fact, bindings)
-                    if extended is not None:
-                        yield from walk(index + 1, extended, support + (fact,), negative)
-            elif step.kind == "absent":
-                assert step.literal is not None
-                absent = step.literal.atom.ground(bindings)
-                if absent not in model.atoms:
-                    yield from walk(index + 1, bindings, support, negative + (absent,))
-            elif step.kind == "filter":
-                assert step.compare is not None
-                if step.compare.holds(bindings):
-                    yield from walk(index + 1, bindings, support, negative)
-            elif step.kind == "assign":
-                assert step.variable is not None
-                value = evaluate(step.expression, bindings)  # type: ignore[arg-type]
-                extended = dict(bindings)
-                extended[step.variable] = value
-                yield from walk(index + 1, extended, support, negative)
-            else:  # pragma: no cover - guarded by Rule.plan
-                raise AssertionError(f"unknown plan step {step.kind!r}")
-
-        yield from walk(0, {}, (), ())
+        yield from match_body(compiled_rule.steps, model)
 
     # -- constraints -----------------------------------------------------
 
@@ -246,6 +209,55 @@ class ForwardChainer:
                         negative_support=negative,
                     )
                 )
+
+
+def match_body(
+    steps: Sequence[Step], model: Model
+) -> Iterator[tuple[dict[str, Const], tuple[Atom, ...], tuple[Atom, ...]]]:
+    """Enumerate the groundings of a planned rule body against a model.
+
+    Yields ``(bindings, positive support, negative support)`` for each way the
+    body holds. Shared by the forward chainer and the consistency layer so both
+    ground rules identically -- the Type 5 check must see the same
+    instantiations the crisp engine does.
+    """
+
+    def walk(
+        index: int,
+        bindings: dict[str, Const],
+        support: tuple[Atom, ...],
+        negative: tuple[Atom, ...],
+    ) -> Iterator[tuple[dict[str, Const], tuple[Atom, ...], tuple[Atom, ...]]]:
+        if index == len(steps):
+            yield bindings, support, negative
+            return
+        step = steps[index]
+        if step.kind == "match":
+            assert step.literal is not None
+            pattern = step.literal.atom.ground(bindings)
+            for fact in model.candidates(pattern):
+                extended = match_atom(pattern, fact, bindings)
+                if extended is not None:
+                    yield from walk(index + 1, extended, support + (fact,), negative)
+        elif step.kind == "absent":
+            assert step.literal is not None
+            absent = step.literal.atom.ground(bindings)
+            if absent not in model.atoms:
+                yield from walk(index + 1, bindings, support, negative + (absent,))
+        elif step.kind == "filter":
+            assert step.compare is not None
+            if step.compare.holds(bindings):
+                yield from walk(index + 1, bindings, support, negative)
+        elif step.kind == "assign":
+            assert step.variable is not None
+            value = evaluate(step.expression, bindings)  # type: ignore[arg-type]
+            extended = dict(bindings)
+            extended[step.variable] = value
+            yield from walk(index + 1, extended, support, negative)
+        else:  # pragma: no cover - guarded by Rule.plan
+            raise AssertionError(f"unknown plan step {step.kind!r}")
+
+    yield from walk(0, {}, (), ())
 
 
 def solve(program: Program, **kwargs) -> Model:

@@ -109,6 +109,9 @@ class SpacyTripleExtractor:
             if not found:
                 perception.unparsed.append(sentence.text.strip())
         perception.diagnostics["model"] = self.model
+        perception.diagnostics["proper_names"] = sorted(
+            {normalise_symbol(token.text) for token in doc if _is_proper_name(token)}
+        )
         perception.diagnostics["sentences"] = len(list(doc.sents))
         perception.diagnostics["unparsed"] = len(perception.unparsed)
         return perception
@@ -218,6 +221,22 @@ class SpacyTripleExtractor:
                 evidence=evidence.strip(),
             )
         )
+
+
+def _is_proper_name(token) -> bool:
+    """Proper name by POS tag, or by the way the noun phrase is built.
+
+    The small English model tags some first names as common nouns, so the tag
+    alone is not enough. A capitalised singular noun that takes no determiner
+    is a proper name in practice, which catches the cases the tagger misses.
+    """
+    if token.pos_ == "PROPN":
+        return True
+    if token.pos_ != "NOUN" or not token.text[:1].isupper():
+        return False
+    if token.tag_ in ("NNS", "NNPS"):  # plurals are classes, not individuals
+        return False
+    return not any(child.dep_ == "det" for child in token.children)
 
 
 def _with_conjuncts(token) -> list:

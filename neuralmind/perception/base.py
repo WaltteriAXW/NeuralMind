@@ -74,7 +74,11 @@ class Perception:
         self.rules.extend(other.rules)
         self.unparsed.extend(other.unparsed)
         for key, value in other.diagnostics.items():
-            self.diagnostics.setdefault(key, value)
+            if key == "proper_names":
+                merged = set(self.diagnostics.get(key, ())) | set(value)
+                self.diagnostics[key] = sorted(merged)
+            else:
+                self.diagnostics.setdefault(key, value)
         return self
 
     def into(self, kb: KnowledgeBase) -> KnowledgeBase:

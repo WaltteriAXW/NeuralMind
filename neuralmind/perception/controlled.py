@@ -122,12 +122,16 @@ class ControlledEnglishParser:
         self.schema = schema or TripleSchema()
         #: Rule-based extraction is deterministic, so the default is certainty.
         self.confidence = confidence
+        self._bare_mentions: set[str] = set()
+        self._determined_mentions: set[str] = set()
 
     # -- public API ------------------------------------------------------
 
     def perceive(self, raw: str) -> Perception:
         """Parse a passage into facts and rules."""
         perception = Perception(source=f"text:{self.name}")
+        self._bare_mentions = set()
+        self._determined_mentions = set()
         for sentence in split_sentences(raw):
             if not sentence.strip():
                 continue
@@ -137,6 +141,11 @@ class ControlledEnglishParser:
                 perception.unparsed.append(f"{sentence}  ({failure})")
         perception.diagnostics["sentences"] = len(split_sentences(raw))
         perception.diagnostics["unparsed"] = len(perception.unparsed)
+        # A noun phrase that never takes a determiner is almost always a proper
+        # name in English; the output layer uses this to capitalise correctly.
+        perception.diagnostics["proper_names"] = sorted(
+            self._bare_mentions - self._determined_mentions
+        )
         return perception
 
     def parse_question(self, question: str) -> Atom:
@@ -379,10 +388,18 @@ class ControlledEnglishParser:
         Pronouns bind to the individual already introduced, which is what makes
         'If someone is red then they are round' a single-variable rule.
         """
-        tokens = strip_determiner(tokenize(phrase))
+        raw_tokens = tokenize(phrase)
+        tokens = strip_determiner(raw_tokens)
         if not tokens:
             raise _ParseFailure("empty noun phrase")
         key = tokens[-1].lower()
+        if key not in PRONOUNS and key not in QUANTIFIED:
+            symbol = normalise_symbol(" ".join(tokens))
+            if len(raw_tokens) != len(tokens) or singularise(tokens[-1]) != key:
+                # Took a determiner, or is plural: a class, not an individual.
+                self._determined_mentions.add(symbol)
+            else:
+                self._bare_mentions.add(symbol)
         if key in PRONOUNS:
             if bindings:
                 # 'it'/'they' refer to the first individual introduced.
