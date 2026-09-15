@@ -32,6 +32,7 @@ from ..knowledge.base import FactRecord
 from .base import Perception
 from .lexicon import (
     AUXILIARIES,
+    base_verb,
     COPULAS,
     DETERMINERS,
     NEGATIONS,
@@ -343,7 +344,8 @@ class ControlledEnglishParser:
         if not subject:
             raise _ParseFailure(f"{text!r} has no subject")
         if not obj_tokens:
-            return Clause("attribute", subject, verb, negated=negated, text=text)
+            # "the dog barks" -- an intransitive action, not an attribute.
+            return Clause("action", subject, verb, negated=negated, text=text)
         return Clause(
             "relation", subject, verb, obj=" ".join(obj_tokens), negated=negated, text=text
         )
@@ -400,8 +402,10 @@ class ControlledEnglishParser:
             return self.schema.attribute(subject, clause.value, clause.negated)
         if clause.kind == "membership":
             return self.schema.membership(subject, singularise(clause.value), clause.negated)
+        if clause.kind == "action":
+            return self.schema.action(subject, base_verb(clause.value), clause.negated)
         obj = self._term(clause.obj or "", bindings)
-        return self.schema.relation(subject, clause.value, obj, clause.negated)
+        return self.schema.relation(subject, base_verb(clause.value), obj, clause.negated)
 
     def _term(self, phrase: str, bindings: dict[str, Term]) -> Term:
         """Map a noun phrase to a constant, or to a shared variable.

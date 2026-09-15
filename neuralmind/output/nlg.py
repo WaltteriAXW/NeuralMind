@@ -213,13 +213,9 @@ class Realiser:
 
 def _base_form(verb: str) -> str:
     """Undo third-person agreement, for negation ('likes' -> 'like')."""
-    if verb.endswith("ies") and len(verb) > 3:
-        return verb[:-3] + "y"
-    if verb.endswith(("shes", "ches", "xes", "zes", "oes")):
-        return verb[:-2]
-    if verb.endswith("s") and not verb.endswith("ss"):
-        return verb[:-1]
-    return verb
+    from ..perception.lexicon import base_verb
+
+    return base_verb(verb)
 
 
 _DEFAULT = Realiser()

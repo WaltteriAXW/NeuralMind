@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence, Union
 
 from .consistency.layer import ConsistencyLayer, ConsistencyReport, Interpretation
-from .core.parser import parse_atom
+from .core.parser import ParseError, parse_atom
 from .core.terms import Atom
 from .inference.engine import Answer, ReasoningEngine
 from .inference.model import Model
@@ -269,13 +269,26 @@ class NeuralMindPipeline:
     # -- helpers -----------------------------------------------------------
 
     def _as_query(self, question: Union[str, Atom]) -> Atom:
+        """Accept either a logic atom or an English question.
+
+        Logic syntax wins when the text parses as an atom -- ``ancestor(a, c)``
+        contains a space but is not a question, so the presence of whitespace
+        cannot be the test.
+        """
         if isinstance(question, Atom):
             return question
         text = question.strip()
-        if text.endswith("?") or " " in text.rstrip("?"):
-            parser = getattr(self.perceptor, "parse_question", None)
-            if parser is not None:
+        parser = getattr(self.perceptor, "parse_question", None)
+        if not text.endswith("?"):
+            try:
+                return parse_atom(text)
+            except ParseError:
+                pass
+        if parser is not None:
+            try:
                 return parser(text)
+            except Exception:
+                pass
         return parse_atom(text.rstrip("?").strip())
 
     @classmethod

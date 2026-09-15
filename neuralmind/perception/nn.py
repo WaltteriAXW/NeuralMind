@@ -338,6 +338,11 @@ class ConvNet:
                 key = f"{index}.{name}"
                 if key not in data:
                     raise ValueError(f"checkpoint is missing {key}; architecture mismatch")
+                if data[key].shape != value.shape:
+                    raise ValueError(
+                        f"architecture mismatch at {key}: checkpoint holds "
+                        f"{data[key].shape}, this network expects {value.shape}"
+                    )
                 value[...] = data[key]
         return self
 

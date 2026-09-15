@@ -102,10 +102,12 @@ denial_reason(Q, account_suspended) :-
 sod_conflict(R1, R2) :- conflicting_duties(R1, R2).
 sod_conflict(R2, R1) :- conflicting_duties(R1, R2).
 
+% R1 < R2 reports each conflicting pair once rather than in both orders.
 toxic_combination(E, R1, R2) :-
     effective_role(E, R1),
     effective_role(E, R2),
-    sod_conflict(R1, R2).
+    sod_conflict(R1, R2),
+    R1 < R2.
 
 self_approved(P, E) :- submitted(P, E), approved(P, E).
 

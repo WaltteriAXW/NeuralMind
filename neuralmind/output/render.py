@@ -20,13 +20,17 @@ _MARKERS = {
 }
 
 
-def render_proof(node: ProofNode, indent: str = "", is_last: bool = True, top: bool = True) -> str:
+def render_proof(
+    node: Optional[ProofNode], indent: str = "", is_last: bool = True, top: bool = True
+) -> str:
     """Render a proof tree as an indented ASCII tree.
 
     The root line is the conclusion; each level below it is the reason for the
     line above. Leaves marked ``[given]`` are inputs, everything else was
     derived by the rule shown in parentheses.
     """
+    if node is None:
+        return "(no proof: the atom does not hold)"
     lines: list[str] = []
     if top:
         lines.append(_label(node))

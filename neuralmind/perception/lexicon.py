@@ -19,6 +19,7 @@ __all__ = [
     "AUXILIARIES",
     "normalise_symbol",
     "singularise",
+    "base_verb",
     "strip_determiner",
     "is_variable_phrase",
     "split_sentences",
@@ -83,6 +84,33 @@ def singularise(word: str) -> str:
     if lower.endswith(("sses", "shes", "ches", "xes", "zes")):
         return lower[:-2]
     if lower.endswith("ss") or lower.endswith("us") or lower.endswith("is"):
+        return lower
+    if lower.endswith("s") and len(lower) > 2:
+        return lower[:-1]
+    return lower
+
+
+_IRREGULAR_VERBS = {
+    "has": "have", "does": "do", "is": "be", "are": "be", "was": "be",
+    "were": "be", "goes": "go", "says": "say",
+}
+
+
+def base_verb(word: str) -> str:
+    """Undo third-person agreement: ``chases`` -> ``chase``.
+
+    Both text extractors run verbs through this, so the grammar's ``purrs``
+    and spaCy's lemmatised ``purr`` land on the same predicate. Without it the
+    two paths silently produce facts that never unify.
+    """
+    lower = word.strip().lower()
+    if lower in _IRREGULAR_VERBS:
+        return _IRREGULAR_VERBS[lower]
+    if lower.endswith("ies") and len(lower) > 4:
+        return lower[:-3] + "y"
+    if lower.endswith(("shes", "ches", "xes", "zes", "sses", "oes")):
+        return lower[:-2]
+    if lower.endswith("ss") or lower.endswith("us"):
         return lower
     if lower.endswith("s") and len(lower) > 2:
         return lower[:-1]

@@ -65,7 +65,7 @@ def spacy_available(model: str = "en_core_web_sm") -> bool:
 def _load_spacy(model: str):
     import spacy
 
-    return spacy.load(model, disable=["ner", "lemmatizer"] if False else [])
+    return spacy.load(model)
 
 
 class SpacyTripleExtractor:

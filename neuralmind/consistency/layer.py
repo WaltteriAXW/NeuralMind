@@ -74,6 +74,25 @@ class ConsistencyReport:
     #: Rules that hold crisply but only just, in fuzzy terms.
     weak_rules: list[RuleSatisfaction] = field(default_factory=list)
     threshold: float = 0.8
+    #: Propagated truth value of every atom in the model.
+    truth: dict = field(default_factory=dict)
+
+    def confidence(self, atom: Atom) -> float:
+        """How well supported a conclusion is, after propagation.
+
+        A conclusion is only as good as the chain under it: derive something
+        from a fact the classifier was 55% sure of, and this reports 0.55, not
+        the 1.0 the crisp model shows.
+        """
+        return float(self.truth.get(atom, 1.0 if atom in self.truth else 0.0))
+
+    def uncertain_conclusions(self, threshold: Optional[float] = None) -> list[tuple]:
+        """Derived atoms whose support is weaker than the threshold."""
+        limit = self.threshold if threshold is None else threshold
+        return sorted(
+            ((atom, value) for atom, value in self.truth.items() if value < limit),
+            key=lambda pair: pair[1],
+        )
 
     @property
     def consistent(self) -> bool:
@@ -113,6 +132,10 @@ class ConsistencyReport:
             "threshold": self.threshold,
             "hard_violations": [v.describe() for v in self.hard_violations],
             "weak_rules": [r.to_dict() for r in self.weak_rules],
+            "uncertain_conclusions": [
+                {"atom": str(atom), "confidence": round(value, 4)}
+                for atom, value in self.uncertain_conclusions()
+            ],
             "rules": [r.to_dict() for r in self.rules],
         }
 
@@ -169,6 +192,40 @@ class ConsistencyLayer:
 
     # -- checking --------------------------------------------------------
 
+    def propagate(
+        self, model: Model, confidences: Optional[dict[Atom, float]] = None
+    ) -> dict[Atom, float]:
+        """Push input confidences through the derivations.
+
+        An input fact keeps its own confidence. A derived atom takes the fuzzy
+        conjunction of its supports, combined across alternative derivations
+        with the t-conorm -- two independent reasons to believe something are
+        better than one. Atoms are visited in derivation-depth order, so every
+        support is settled before the atom that rests on it.
+        """
+        confidences = confidences or {}
+        truth: dict[Atom, float] = {}
+        for atom in sorted(model.atoms, key=lambda a: (model.depth.get(a, 0), str(a))):
+            if atom in confidences:
+                truth[atom] = float(confidences[atom])
+                continue
+            values: list[float] = []
+            for justification in model.justifications.get(atom, ()):
+                if justification.rule.is_fact and not justification.support:
+                    values.append(1.0)
+                    continue
+                if any(support not in truth for support in justification.support):
+                    continue  # rests on something not yet settled; a shallower
+                              # derivation of the same atom will cover it
+                body = [truth[support] for support in justification.support]
+                body.extend(
+                    self.semantics.negate(truth.get(absent, 0.0))
+                    for absent in justification.negative_support
+                )
+                values.append(self.semantics.conjoin(body))
+            truth[atom] = self.semantics.disjoin(values) if values else 1.0
+        return truth
+
     def check(
         self,
         model: Model,
@@ -177,12 +234,10 @@ class ConsistencyLayer:
     ) -> ConsistencyReport:
         """Evaluate every rule fuzzily over a model and its confidences."""
         program = program or self._program()
-        confidences = confidences or {}
+        propagated = self.propagate(model, confidences)
 
         def truth(atom: Atom) -> float:
-            if atom in confidences:
-                return float(confidences[atom])
-            return 1.0 if atom in model else 0.0
+            return propagated.get(atom, 0.0)
 
         satisfactions: list[RuleSatisfaction] = []
         for rule in program.rules:
@@ -202,6 +257,7 @@ class ConsistencyLayer:
             hard_violations=list(model.violations),
             weak_rules=weak,
             threshold=self.threshold,
+            truth=propagated,
         )
 
     def _rule_satisfaction(self, rule: Rule, model: Model, truth) -> RuleSatisfaction:
