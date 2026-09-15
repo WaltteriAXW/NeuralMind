@@ -114,7 +114,9 @@ class ClingoBackend:
     def __init__(self, models: int = 1, options: Sequence[str] = ()) -> None:
         #: 0 means "enumerate every answer set".
         self.models = models
-        self.options = list(options)
+        # Undefined-atom notices are expected here: a rule set is written
+        # against input predicates that a given fact set may not use.
+        self.options = list(options) if options else ["--warn=none"]
 
     def solve(self, program: Program | str, models: Optional[int] = None) -> SolveResult:
         """Ground and solve, returning up to ``models`` answer sets."""

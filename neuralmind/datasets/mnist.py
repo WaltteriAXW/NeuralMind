@@ -17,7 +17,15 @@ from typing import Optional
 
 import numpy as np
 
-__all__ = ["load_mnist", "MnistSplit", "mnist_available", "default_root", "MNIST_URLS"]
+__all__ = [
+    "load_mnist",
+    "MnistSplit",
+    "DigitPair",
+    "digit_pairs",
+    "mnist_available",
+    "default_root",
+    "MNIST_URLS",
+]
 
 MNIST_URLS = {
     "train-images-idx3-ubyte.gz": "https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz",
@@ -94,3 +102,37 @@ def _read_labels(path: Path) -> np.ndarray:
             raise ValueError(f"{path} is not an IDX label file (magic {magic})")
         buffer = handle.read(count)
     return np.frombuffer(buffer, dtype=np.uint8).astype(np.int64)
+
+
+@dataclass
+class DigitPair:
+    """Two digit images and the sum the pipeline should work out."""
+
+    left: np.ndarray
+    right: np.ndarray
+    left_label: int
+    right_label: int
+
+    @property
+    def total(self) -> int:
+        return int(self.left_label) + int(self.right_label)
+
+    @property
+    def images(self) -> np.ndarray:
+        return np.stack([self.left, self.right])
+
+
+def digit_pairs(split: MnistSplit, count: int = 100, seed: int = 0) -> list[DigitPair]:
+    """Sample image pairs for the digit-addition task (blueprint Phase 1)."""
+    rng = np.random.default_rng(seed)
+    left_index = rng.integers(0, len(split), size=count)
+    right_index = rng.integers(0, len(split), size=count)
+    return [
+        DigitPair(
+            left=split.images[i],
+            right=split.images[j],
+            left_label=int(split.labels[i]),
+            right_label=int(split.labels[j]),
+        )
+        for i, j in zip(left_index, right_index)
+    ]

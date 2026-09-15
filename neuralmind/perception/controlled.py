@@ -289,30 +289,13 @@ class ControlledEnglishParser:
             if not tokens:
                 continue
             if _find_main_copula(tokens) is None and not _find_verb_position(tokens):
-                # A bare complement continues the previous clause.
-                if clauses:
-                    previous = clauses[-1]
-                    clauses.append(
-                        Clause(
-                            kind=previous.kind,
-                            subject=previous.subject,
-                            value=self._complement_value(tokens, previous.kind),
-                            obj=previous.obj if previous.kind == "relation" else None,
-                            negated=previous.negated,
-                            text=fragment,
-                        )
-                        if previous.kind != "relation"
-                        else Clause(
-                            kind="relation",
-                            subject=previous.subject,
-                            value=previous.value,
-                            obj=" ".join(strip_determiner(tokens)),
-                            negated=previous.negated,
-                            text=fragment,
-                        )
-                    )
-                    continue
-                raise _ParseFailure(f"fragment {fragment!r} has no verb")
+                # A bare complement continues the previous clause: in
+                # "someone is small and green and a lion", the last two
+                # fragments have no verb of their own.
+                if not clauses:
+                    raise _ParseFailure(f"fragment {fragment!r} has no verb")
+                clauses.append(self._continuation(clauses[-1], tokens, fragment))
+                continue
             clauses.append(self._parse_clause(tokens, fragment))
         return clauses
 
@@ -363,6 +346,45 @@ class ControlledEnglishParser:
             return Clause("attribute", subject, verb, negated=negated, text=text)
         return Clause(
             "relation", subject, verb, obj=" ".join(obj_tokens), negated=negated, text=text
+        )
+
+    def _continuation(self, previous: Clause, tokens: list[str], text: str) -> Clause:
+        """Attach a verbless fragment to the clause before it.
+
+        The fragment's own shape decides its kind, not the previous clause's:
+        "a lion" is a class even when it follows "is small".
+        """
+        if previous.kind == "relation":
+            return Clause(
+                kind="relation",
+                subject=previous.subject,
+                value=previous.value,
+                obj=" ".join(strip_determiner(tokens)),
+                negated=previous.negated,
+                text=text,
+            )
+        if tokens[0].lower() in DETERMINERS:
+            return Clause(
+                kind="membership",
+                subject=previous.subject,
+                value=singularise(" ".join(strip_determiner(tokens))),
+                negated=previous.negated,
+                text=text,
+            )
+        if len(tokens) == 1 and singularise(tokens[0]) != tokens[0].lower():
+            return Clause(
+                kind="membership",
+                subject=previous.subject,
+                value=singularise(tokens[0]),
+                negated=previous.negated,
+                text=text,
+            )
+        return Clause(
+            kind=previous.kind,
+            subject=previous.subject,
+            value=self._complement_value(tokens, previous.kind),
+            negated=previous.negated,
+            text=text,
         )
 
     def _complement_value(self, tokens: list[str], kind: str) -> str:

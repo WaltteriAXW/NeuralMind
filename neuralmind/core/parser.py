@@ -322,6 +322,38 @@ class _Parser:
         raise ParseError(f"unexpected token {token} while reading a term")
 
 
+#: ``%@ Some label`` on the line(s) before a rule names it for humans.
+_LABEL_RE = re.compile(r"^\s*%@\s*(.+?)\s*$")
+
+
+def _collect_labels(source: str) -> dict[int, str]:
+    """Map each labelled rule's line number to its label.
+
+    A label applies to the next statement that starts at or after it, which is
+    how a constraint gets to report itself as "Separation of duties" instead of
+    as a line number.
+    """
+    labels: dict[int, str] = {}
+    pending: Optional[str] = None
+    for number, line in enumerate(source.splitlines(), start=1):
+        match = _LABEL_RE.match(line)
+        if match:
+            pending = match.group(1)
+            continue
+        if pending and line.strip() and not line.lstrip().startswith("%"):
+            labels[number] = pending
+            pending = None
+    return labels
+
+
+def _apply_labels(program: Program, labels: dict[int, str]) -> None:
+    import dataclasses
+
+    for index, rule in enumerate(program.rules):
+        if rule.line in labels:
+            program.rules[index] = dataclasses.replace(rule, label=labels[rule.line])
+
+
 def parse_program(source: str, source_name: Optional[str] = None, check: bool = True) -> Program:
     """Parse ASP/Datalog source into a :class:`Program`.
 
@@ -330,6 +362,7 @@ def parse_program(source: str, source_name: Optional[str] = None, check: bool = 
     base that fails these checks would otherwise produce a wrong model.
     """
     program = _Parser(_tokenize(source), source_name).parse()
+    _apply_labels(program, _collect_labels(source))
     if check and not program.raw_asp:
         program.check()
     return program
