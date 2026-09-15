@@ -1,7 +1,10 @@
 """The NumPy network: shapes, gradients, training and persistence."""
 
-import numpy as np
 import pytest
+
+# The network is NumPy-only by design, so skip the module rather than failing
+# collection where NumPy is absent.
+np = pytest.importorskip("numpy")
 
 from neuralmind.perception.nn import (
     Conv2D, ConvNet, Dense, Flatten, MaxPool2D, ReLU, _softmax, _softmax_cross_entropy,

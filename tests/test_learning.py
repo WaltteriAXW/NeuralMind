@@ -1,12 +1,21 @@
 """Gradients through the logic: the semantic loss and weak supervision."""
 
-import numpy as np
 import pytest
+
+# The learning layer is NumPy-only by design, so skip the module rather than
+# failing collection where NumPy is absent.
+np = pytest.importorskip("numpy")
 
 from neuralmind.knowledge.base import KnowledgeBase
 from neuralmind.learning.semantic_loss import (
     NeuralPredicate, SemanticLoss, TableTooLarge, softmax_backward,
 )
+
+
+def _mnist_available() -> bool:
+    from neuralmind.datasets.mnist import mnist_available
+
+    return mnist_available()
 
 
 @pytest.fixture(scope="module")
@@ -278,3 +287,26 @@ def test_an_empty_batch_is_rejected(sum_loss):
 
     with pytest.raises(ValueError, match="at least one example"):
         WeaklySupervisedTrainer(ConvNet(seed=0), sum_loss).train_step([])
+
+
+@pytest.mark.skipif(not _mnist_available(), reason="MNIST data missing")
+def test_the_committed_weakly_supervised_checkpoint_holds_its_claim():
+    """Guard the README's headline number against drift.
+
+    This checkpoint was trained without a single digit label. If it ever stops
+    clearing the bar, the claim in the README is wrong and this fails first.
+    """
+    from pathlib import Path
+
+    from neuralmind.datasets.mnist import load_mnist
+    from neuralmind.perception.nn import ConvNet
+
+    checkpoint = (
+        Path(__file__).resolve().parents[1]
+        / "neuralmind/perception/weights/mnist_weak.npz"
+    )
+    if not checkpoint.exists():  # pragma: no cover - only if weights are stripped
+        pytest.skip("weakly supervised checkpoint not present")
+    _, test = load_mnist()
+    accuracy = ConvNet.from_checkpoint(checkpoint).accuracy(test.images, test.labels)
+    assert accuracy > 0.97, f"weakly supervised checkpoint fell to {accuracy:.4f}"

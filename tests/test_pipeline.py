@@ -40,12 +40,32 @@ def test_questions_can_be_atoms_or_english():
     assert pipeline.ask("Is Bob warm blooded?").holds
 
 
+class _StubPerceptor:
+    """A perceptor with fixed output, so the test exercises the pipeline's
+    confidence policy rather than whichever text extractor is installed."""
+
+    name = "stub"
+
+    def perceive(self, raw):
+        from neuralmind.core.parser import parse_atom
+        from neuralmind.knowledge.base import FactRecord
+        from neuralmind.perception.base import Perception
+
+        return Perception(
+            source="stub",
+            facts=[
+                FactRecord(parse_atom("attr(bob, blue)"), 0.40, "stub"),
+                FactRecord(parse_atom("attr(bob, round)"), 0.99, "stub"),
+            ],
+        )
+
+
 def test_low_confidence_facts_are_dropped_and_reported():
     kb = KnowledgeBase("t")
-    pipeline = NeuralMindPipeline(kb, minimum_confidence=0.99)
-    result = pipeline.run("Carol lives in Helsinki.", question="Is Carol green?")
-    # Prepositional relations carry a lower structural weight than the floor.
-    assert any("dropped" in note for note in result.notes) or not kb.facts
+    pipeline = NeuralMindPipeline(kb, perceptor=_StubPerceptor(), minimum_confidence=0.9)
+    result = pipeline.run("anything")
+    assert any("dropped" in note and "attr(bob, blue)" in note for note in result.notes)
+    assert [str(record.atom) for record in kb.facts] == ["attr(bob, round)"]
 
 
 def test_contradictions_are_flagged_not_hidden():

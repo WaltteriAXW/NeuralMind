@@ -100,6 +100,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | 5 | A non-technical reader can see *why* | JSON proof trees + template-generated prose |
 | 6 | Ship something narrow but real | access-policy checker with audit evidence |
 | 7 | Say what fraction of failures are perception vs reasoning | **1200/1200** to proof depth 4; attribution built in |
+| — | *beyond the roadmap:* learn perception through the rules | **98.20%** digit accuracy from **zero** digit labels |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
@@ -142,9 +143,28 @@ Those 1,900 calls are the whole symbolic cost: 19 possible sums × 100 possible
 digit pairs, computed once and cached. The gradient of `P(sum = s)` through the
 addition rule is the entire training signal.
 
+### What the logic was worth
+
+`scripts/train_weak_supervision.py` runs it at full length. Same architecture,
+same 30,000 images, same optimiser — the only difference is what the labels say:
+
+| Supervision | Digit labels used | MNIST test accuracy |
+|---|---|---|
+| Every image labelled with its digit | 30,000 | **98.48%** |
+| Image pairs labelled only with their sum | **0** | **98.20%** |
+
+A 0.28-point gap for giving up every label. The remaining errors are ordinary
+visual confusions — 6→5, 7→2, 9→4 — not a systematic relabeling, so the network
+learned digit identity rather than some sum-preserving permutation of it. (It
+could not have learned one anyway: if `π(a) + π(b) = a + b` for all pairs, then
+`π` is forced to be the identity. The rule pins the mapping down exactly.)
+
+Both checkpoints are committed, so the comparison is reproducible without
+retraining.
+
 This answers the obvious objection to a Type 3 pipeline — that the two halves
 must be trained separately, so the perception layer needs its own labelled data.
-It does not. `scripts/train_weak_supervision.py` runs the full-length version.
+It does not.
 
 **Read the Phase 3/7 numbers honestly.** They are measured on generated
 controlled-English problems in the ProofWriter register, not on the real

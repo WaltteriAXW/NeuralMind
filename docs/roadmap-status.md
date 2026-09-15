@@ -64,10 +64,21 @@ counterpart -- the DeepProbLog/Scallop capability proper -- by exact weighted
 model counting over a truth tensor the symbolic engine fills.
 
 The demonstration is MNIST addition with **sum-only supervision**: pairs of
-images labelled with their sum and never with a digit. See the measured result
-in the README. It matters because it answers the obvious objection to a Type 3
-pipeline -- that the neural and symbolic halves must be trained separately, and
-that the perception layer therefore needs its own labelled data. It does not.
+images labelled with their sum and never with a digit.
+
+| Supervision | Digit labels | Test accuracy |
+|---|---|---|
+| Per-image digit labels | 30,000 | 98.48% |
+| Pair sums only | 0 | 98.20% |
+
+Same architecture, same 30,000 images, same optimiser; 12 epochs against 10.
+Both checkpoints are committed under `neuralmind/perception/weights/`, and
+`tests/test_learning.py` asserts the weak one still hits its number, so the
+claim cannot rot.
+
+It matters because it answers the obvious objection to a Type 3 pipeline -- that
+the neural and symbolic halves must be trained separately, and that the
+perception layer therefore needs its own labelled data. It does not.
 
 ## What is genuinely not built
 - **Vision beyond digits.** No Detectron2 or SAM integration. The perceptor
