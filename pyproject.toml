@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuralmind"
+version = "0.1.0"
+description = "A non-LLM neurosymbolic reasoning system: neural perception, symbolic inference, proof-tree explanations."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "NeuralMind contributors" }]
+keywords = ["neurosymbolic", "reasoning", "datalog", "asp", "answer-set-programming", "explainable-ai"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# Authoritative ASP backend (MIT). Needed for choice rules, aggregates,
+# optimisation and unstratified negation -- not for the core Datalog engine.
+asp = ["clingo>=5.6"]
+# Knowledge-graph import/export (BSD-3).
+rdf = ["rdflib>=6.0"]
+# Neural perception layers.
+numeric = ["numpy>=1.23"]
+text = ["spacy>=3.5"]
+vision = ["torch>=2.0"]
+dev = ["pytest>=7.0", "numpy>=1.23", "rdflib>=6.0"]
+all = ["clingo>=5.6", "rdflib>=6.0", "numpy>=1.23"]
+
+[project.scripts]
+neuralmind = "neuralmind.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["neuralmind*"]
+
+[tool.setuptools.package-data]
+neuralmind = [
+  "knowledge/rules/*.lp",
+  "perception/weights/*.npz",
+  "perception/weights/*.json",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

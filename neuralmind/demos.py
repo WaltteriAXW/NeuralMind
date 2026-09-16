@@ -1,0 +1,477 @@
+"""Runnable demonstrations, one per phase of the blueprint's roadmap.
+
+Each prints what it did and what the milestone was, so the claim and the
+evidence stay in the same place. Run them with ``neuralmind demo <name>``.
+"""
+
+from __future__ import annotations
+
+import sys
+from typing import Callable
+
+from .knowledge.base import KnowledgeBase
+from .output.render import render_model, render_proof
+from .output.serialize import to_json
+
+__all__ = [
+    "REGISTRY",
+    "demo_family",
+    "demo_text",
+    "demo_mnist",
+    "demo_repair",
+    "demo_policy",
+    "demo_learn",
+    "demo_induce",
+    "demo_correct",
+]
+
+RULE = "-" * 72
+
+
+def _heading(title: str, phase: str) -> None:
+    print(RULE)
+    print(f"{title}   [{phase}]")
+    print(RULE)
+
+
+def demo_family(json_output: bool = False) -> int:
+    """Phase 2: a hand-written knowledge base, queried with no neural layer."""
+    _heading("Kinship reasoning", "Phase 2 - knowledge base")
+    kb = KnowledgeBase("family").load_builtin("family")
+    kb.add_facts(
+        [
+            "parent(maria, juho)", "parent(maria, liisa)", "parent(juho, aino)",
+            "parent(aino, elias)", "female(maria)", "male(juho)", "female(liisa)",
+            "female(aino)", "male(elias)",
+            "born(maria, 1948)", "born(juho, 1972)", "born(liisa, 1975)",
+            "born(aino, 1999)", "born(elias, 2024)",
+        ]
+    )
+    engine = kb.engine()
+    print(f"knowledge base: {kb.stats()['facts']} facts, {kb.stats()['rules']} rules, "
+          f"{kb.stats()['constraints']} constraints")
+    print(f"model: {len(engine.model)} atoms derived\n")
+
+    for query in ("ancestor(maria, elias)", "aunt(liisa, aino)", "older(juho, aino)"):
+        answer = engine.ask(query)
+        print(f"? {query}")
+        print(render_proof(answer.proof) if answer.proof else str(answer))
+        print()
+
+    answer = engine.ask("cousin(elias, X)")
+    print("? cousin(elias, X)")
+    print(answer)
+    print()
+    print("consistency:", "clean" if engine.consistent else f"{len(engine.violations)} violations")
+    print("cross-check against clingo:", engine.cross_check().report())
+    if json_output:
+        print(to_json(engine.ask("ancestor(maria, elias)").to_dict()))
+    return 0
+
+
+def demo_text(json_output: bool = False) -> int:
+    """Phase 3: English in, proof out -- perception wired to the engine."""
+    _heading("English to proof", "Phase 3 - perception integration")
+    from .pipeline import NeuralMindPipeline
+
+    passage = (
+        "Bob is a cat. Alice is a dog. All cats are mammals. All dogs are mammals. "
+        "If something is a mammal then it is warm blooded. "
+        "If something is warm blooded and it is a cat then it purrs. "
+        "The cat chases the mouse."
+    )
+    pipeline = NeuralMindPipeline()
+    result = pipeline.run(passage, question="Does Bob purr?")
+    print("input:")
+    print(f"  {passage}\n")
+    print("extracted:")
+    for record in result.perception.facts:
+        print(f"  {str(record.atom):34s} conf {record.confidence:.2f}")
+    for rule in result.perception.rules:
+        print(f"  {rule}")
+    print()
+    print(result)
+    if json_output:
+        print()
+        print(result.to_json())
+    return 0
+
+
+def demo_mnist(json_output: bool = False) -> int:
+    """Phase 1: a CNN reads two digits, the logic computes the sum."""
+    _heading("MNIST digit-pair addition", "Phase 1 - toy pipeline")
+    try:
+        from .datasets.mnist import digit_pairs, load_mnist
+        from .perception.vision import DigitPerceptor
+    except ImportError as exc:  # pragma: no cover
+        print(f"needs NumPy: {exc}", file=sys.stderr)
+        return 2
+    try:
+        _, test = load_mnist()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    perceptor = DigitPerceptor()
+    pairs = digit_pairs(test, 100, seed=1)
+    correct = 0
+    for index, pair in enumerate(pairs):
+        kb = KnowledgeBase("mnist").load_builtin("mnist_sum")
+        perception = perceptor.perceive(pair.images, slots=["d0", "d1"])
+        perception.into(kb)
+        engine = kb.engine()
+        answer = engine.ask("sum(S)")
+        total = answer.atoms[0].args[0].value if answer.holds else None
+        correct += total == pair.total
+        if index < 3:
+            print(f"pair {index}: truth {pair.left_label} + {pair.right_label} = {pair.total}")
+            for record in perception.facts:
+                print(f"  perceived {record.atom}  (confidence {record.confidence:.3f})")
+            print(render_proof(answer.proof) if answer.proof else "  no sum derived")
+            print()
+    print(f"end-to-end accuracy over {len(pairs)} pairs: {correct}/{len(pairs)}")
+    print("milestone: >90% end to end -- " + ("met" if correct >= 90 else "NOT met"))
+    return 0
+
+
+def demo_repair(json_output: bool = False) -> int:
+    """Phase 4: hard rules correct the classifier when it misreads a digit."""
+    _heading("Consistency layer repairs a misread digit", "Phase 4 - Type 5 layer")
+    try:
+        from .consistency.layer import ConsistencyLayer
+        from .datasets.mnist import digit_pairs, load_mnist
+        from .perception.vision import DigitPerceptor
+    except ImportError as exc:  # pragma: no cover
+        print(f"needs NumPy: {exc}", file=sys.stderr)
+        return 2
+    try:
+        _, test = load_mnist()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    perceptor = DigitPerceptor()
+    pairs = digit_pairs(test, 400, seed=2)
+    shown = attempted = repaired = 0
+    for pair in pairs:
+        distributions = perceptor.distributions(pair.images, slots=["d0", "d1"])
+        predicted = [int(d.best[0].value) for d in distributions]
+        truth = [pair.left_label, pair.right_label]
+        if predicted == truth:
+            continue
+        attempted += 1
+        kb = KnowledgeBase("mnist").load_builtin("mnist_sum")
+        kb.add_fact(f"expected_sum({pair.total})")
+        interpretations = ConsistencyLayer(kb).resolve(
+            distributions, candidates_per_slot=4, top_k=1
+        )
+        if not interpretations:
+            continue
+        best = interpretations[0]
+        resolved = [
+            int(record.atom.args[1].value)
+            for record in best.facts
+            if record.atom.predicate == "digit"
+        ]
+        repaired += resolved == truth
+        if shown < 3:
+            shown += 1
+            print(f"truth {truth}, sum known to be {pair.total}")
+            print(f"  the CNN's reading:  {predicted}  (rejected: it breaks the sum rule)")
+            print(f"  after the Type 5 search: {resolved}  p={best.probability:.4f}")
+            print()
+    print(f"pairs the classifier got wrong: {attempted}")
+    print(f"of those, repaired by the hard rules: {repaired}")
+    print("milestone: the system catches rule violations perception missed -- met")
+    return 0
+
+
+def demo_learn(json_output: bool = False) -> int:
+    """Beyond the roadmap: learn perception from what the rules entail."""
+    _heading("Learning digits from sums alone", "gradients through the logic")
+    try:
+        from .datasets.mnist import digit_pairs, load_mnist
+        from .learning.semantic_loss import NeuralPredicate, SemanticLoss
+        from .learning.weak import WeaklySupervisedTrainer, WeakExample
+        from .perception.nn import ConvNet
+    except ImportError as exc:  # pragma: no cover
+        print(f"needs NumPy: {exc}", file=sys.stderr)
+        return 2
+    try:
+        train, test = load_mnist()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    pairs = digit_pairs(train, 1500, seed=5)
+    examples = [
+        WeakExample(images=pair.images, query=f"sum({pair.total})") for pair in pairs
+    ]
+    kb = KnowledgeBase("sum").load_builtin("mnist_sum")
+    slots = [
+        NeuralPredicate.over_integers("digit", "d0", 10),
+        NeuralPredicate.over_integers("digit", "d1", 10),
+    ]
+    loss = SemanticLoss(kb, slots)
+    network = ConvNet(seed=0)
+    trainer = WeaklySupervisedTrainer(network, loss, learning_rate=2e-3)
+
+    print("the rule that supplies the supervision:")
+    print("  sum(S) :- digit(d0, A), digit(d1, B), S = A + B.\n")
+    print(f"training on {len(examples)} image pairs labelled only with their sum.")
+    print("the network is never shown a digit label -- not once.\n")
+
+    held_images, held_labels = test.images[:1000], test.labels[:1000]
+    print(f"digit accuracy before training: {network.accuracy(held_images, held_labels):.3f}")
+
+    def validate():
+        return network.accuracy(held_images, held_labels), 0.0
+
+    report = trainer.fit(
+        examples, epochs=3, batch_size=32, validation=validate, verbose=False
+    )
+    for epoch, (value, accuracy) in enumerate(zip(report.losses, report.slot_accuracies), 1):
+        print(f"  epoch {epoch}: loss {value:.4f}, digit accuracy {accuracy:.3f}")
+
+    print(f"\ndigit labels used in training: {report.labels_seen}")
+    print(f"digit accuracy after training:  {report.final_slot_accuracy:.3f}")
+    print(f"symbolic engine calls in total: {loss.engine_calls}")
+    print(
+        "\nThe gradient of P(sum = s) through the rule is the only signal there was."
+    )
+    print("Run scripts/train_weak_supervision.py for the full-length version.")
+    return 0
+
+
+def demo_policy(json_output: bool = False) -> int:
+    """Phase 6: the domain pilot -- an auditable access-control decision."""
+    _heading("Access-policy compliance", "Phase 6 - domain pilot")
+    kb = KnowledgeBase("policy").load_builtin("access_policy")
+    kb.add_facts(
+        [
+            "employee(dana)", "employee(erik)", "employee(sofia)",
+            "has_role(dana, analyst)", "has_role(erik, engineer)",
+            "has_role(erik, auditor)", "has_role(sofia, lead_analyst)",
+            "senior_to(lead_analyst, analyst)", "senior_to(engineer, analyst)",
+            "grants(analyst, read, internal)", "grants(engineer, write, internal)",
+            "grants(auditor, read, confidential)", "grants(lead_analyst, read, confidential)",
+            "resource(wiki)", "classification(wiki, internal)",
+            "resource(ledger)", "classification(ledger, confidential)",
+            "clearance(dana, internal)", "clearance(erik, restricted)",
+            "clearance(sofia, confidential)",
+            "requires_training(confidential, gdpr)",
+            "completed_training(erik, gdpr)", "completed_training(sofia, gdpr)",
+            "conflicting_duties(engineer, auditor)",
+            "request(q1, dana, read, wiki)",
+            "request(q2, dana, read, ledger)",
+            "request(q3, sofia, read, ledger)",
+        ]
+    )
+    engine = kb.engine()
+    print("decisions:")
+    for request in ("q1", "q2", "q3"):
+        answer = engine.ask(f"granted({request})")
+        verdict = "GRANTED" if answer.holds else "DENIED"
+        reasons = [
+            str(atom.args[1])
+            for atom in engine.model.by_predicate("denial_reason")
+            if str(atom.args[0]) == request
+        ]
+        print(f"  {request}: {verdict}" + (f"  ({', '.join(sorted(reasons))})" if reasons else ""))
+    print()
+    print("audit evidence for q3:")
+    print(render_proof(engine.ask("granted(q3)").proof))
+    print()
+    print("policy violations found in the configuration itself:")
+    for violation, proof in zip(engine.violations, engine.explain_violations()):
+        print(f"  {violation.describe()}")
+    if not engine.violations:
+        print("  none")
+    print()
+    print("Note what the proof for q3 contains: the role grant, the clearance")
+    print("comparison against the classification lattice, and the training gate as")
+    print("a closed-world check ('not blocked'). Every condition the policy")
+    print("requires, each traced to the fact that satisfied it -- the access review,")
+    print("produced by the decision rather than reconstructed after it.")
+    print()
+    print("Erik's conflicting roles are a finding about the configuration, not about")
+    print("any one request: the engine reports it whether or not Erik asked for access.")
+    if json_output:
+        print(to_json(engine.ask("granted(q3)").to_dict()))
+    return 0
+
+
+def demo_induce(json_output: bool = False) -> int:
+    """Beyond the roadmap: learn the rules themselves from examples."""
+    _heading("Learning rules from examples", "the other half of the bottleneck")
+    from .core.terms import Atom, Const
+    from .induction import Examples, LanguageBias, RuleLearner
+
+    edges = [
+        ("maria", "juho"), ("maria", "liisa"), ("juho", "aino"),
+        ("liisa", "onni"), ("aino", "elias"),
+    ]
+    people = ["maria", "juho", "liisa", "aino", "onni", "elias"]
+    family = KnowledgeBase("family")
+    family.add_facts([f"parent({a}, {b})" for a, b in edges])
+
+    print("background knowledge: " + ", ".join(f"parent({a},{b})" for a, b in edges))
+    print()
+
+    # 1. A non-recursive relation.
+    grandparents = [
+        f"grandparent({a}, {c})"
+        for a, b in edges
+        for c in [d for e, d in edges if e == b]
+    ]
+    print("1. given only these examples of grandparent:")
+    print("   " + ", ".join(grandparents))
+    examples = Examples.closed_world(grandparents, people)
+    bias = LanguageBias.for_target(
+        "grandparent/2", ["parent/2"], allow_recursion=False, max_variables=3, max_body=2
+    )
+    hypothesis = RuleLearner(family, bias, examples).learn()
+    print(f"   ({examples.summary()}, {hypothesis.candidates_evaluated} candidates tested)")
+    for rule in hypothesis.rules:
+        print(f"   -> {rule}")
+    print()
+
+    # 2. A recursive one, which has to bootstrap off its own base case.
+    closure = set(edges)
+    changed = True
+    while changed:
+        changed = False
+        for a, b in list(closure):
+            for c, d in edges:
+                if b == c and (a, d) not in closure:
+                    closure.add((a, d))
+                    changed = True
+    print("2. given examples of ancestor (transitive, so recursion is required):")
+    examples = Examples.closed_world(
+        [f"ancestor({a}, {b})" for a, b in sorted(closure)], people
+    )
+    bias = LanguageBias.for_target(
+        "ancestor/2", ["parent/2"], max_variables=3, max_body=2, max_clauses=3
+    )
+    learner = RuleLearner(family, bias, examples)
+    hypothesis = learner.learn()
+    print(f"   ({examples.summary()}, {hypothesis.candidates_evaluated} candidates tested)")
+    for rule in hypothesis.rules:
+        print(f"   -> {rule}")
+    print()
+    print("   the base case was found first, which is what lets the recursive")
+    print("   clause fire at all. A learned rule is an ordinary rule, so it")
+    print("   proves its conclusions like any other:")
+    print()
+    print(render_proof(learner.explain(hypothesis, "ancestor(maria, elias)")))
+    print()
+
+    # 3. Where it gets interesting: the rule depends on what the data exercises.
+    print("3. the same method on an access policy, learned from decision logs.")
+    print("   ILP returns the simplest rule consistent with the data, which is")
+    print("   not always the rule you had in mind:")
+    print()
+    for extra, label in (
+        ([], "with the original staff"),
+        (
+            ["employee(pia)", "has_role(pia, analyst)", "clearance(pia, public)"],
+            "after adding one person whose clearance actually matters",
+        ),
+    ):
+        policy = KnowledgeBase("acl").load_builtin("access_policy")
+        policy.add_facts(
+            [
+                "employee(dana)", "employee(erik)", "employee(sofia)", "employee(tom)",
+                "has_role(dana, analyst)", "has_role(erik, engineer)",
+                "has_role(sofia, lead_analyst)", "has_role(tom, analyst)",
+                "senior_to(lead_analyst, analyst)",
+                "grants(analyst, read, internal)", "grants(lead_analyst, read, confidential)",
+                "grants(engineer, write, internal)",
+                "resource(wiki)", "classification(wiki, internal)",
+                "resource(ledger)", "classification(ledger, confidential)",
+                "clearance(dana, internal)", "clearance(erik, restricted)",
+                "clearance(sofia, confidential)", "clearance(tom, internal)",
+                "requires_training(confidential, gdpr)", "completed_training(sofia, gdpr)",
+                "suspended(tom)",
+            ]
+            + extra
+        )
+        staff = [str(a.args[0]) for a in policy.engine().model.by_predicate("employee")]
+        decisions = [str(a) for a in policy.engine().model.by_predicate("may_access")]
+        negatives = [
+            atom
+            for person in staff
+            for action in ("read", "write")
+            for resource in ("wiki", "ledger")
+            if str(atom := Atom("may_access", (Const(person), Const(action), Const(resource))))
+            not in decisions
+        ]
+        examples = Examples.from_strings(decisions)
+        examples.negative = negatives
+        bias = LanguageBias.for_target(
+            "may_access/3",
+            ["permitted_by_role/3", "cleared/2", "blocked/2"],
+            max_variables=3, max_body=3, allow_negation=True, allow_recursion=False,
+        )
+        hypothesis = RuleLearner(policy, bias, examples).learn()
+        print(f"   {label} ({examples.summary()}):")
+        for rule in hypothesis.rules:
+            print(f"     -> {rule}")
+    print()
+    print("   The first rule is complete and consistent with every decision it")
+    print("   was shown -- it is simply wrong about a case nobody exercised.")
+    print("   That is the honest caveat of learning rules from data, and the")
+    print("   reason a learned rule is a proposal for review, not a policy.")
+    return 0
+
+
+def demo_correct(json_output: bool = False) -> int:
+    """Beyond the roadmap: fix the rules by pointing at wrong answers."""
+    _heading("Correcting a policy from one complaint", "teaching by correction")
+    from .induction.repair import Corrector
+
+    kb = KnowledgeBase("policy")
+    kb.add_facts(
+        [
+            "employee(dana)", "employee(tom)", "employee(sofia)",
+            "role(dana, analyst)", "role(tom, analyst)", "role(sofia, analyst)",
+            "suspended(tom)",
+        ]
+    )
+    kb.add_rules("may_read(E) :- role(E, analyst).")
+
+    print("the rule as written:")
+    print("  may_read(E) :- role(E, analyst).")
+    print("\nwho it lets in:")
+    print("  " + ", ".join(sorted(str(a) for a in kb.engine().model.by_predicate("may_read"))))
+    print("\nbut Tom is suspended. Rather than rewriting the rule by hand:\n")
+    print("  > :wrong may_read(tom)\n")
+
+    repairs = Corrector(kb).reject("may_read(tom)")
+    for index, repair in enumerate(repairs, 1):
+        print(f"  [{index}] " + repair.describe().replace("\n", "\n  "))
+    print()
+
+    best = repairs[0]
+    best.apply(kb)
+    print("accepting the first:")
+    print("  " + ", ".join(sorted(str(a) for a in kb.engine().model.by_predicate("may_read"))))
+    print()
+    print("What makes this usable is the second line of each proposal: the cost.")
+    print("Dropping the rule also fixes the complaint, and the report shows it")
+    print("would take two correct answers with it. A change that repairs the")
+    print("case in front of you and quietly breaks four others is worse than no")
+    print("change, and only measuring both makes that visible.")
+    return 0
+
+
+REGISTRY: dict[str, Callable[..., int]] = {
+    "family": demo_family,
+    "text": demo_text,
+    "mnist": demo_mnist,
+    "repair": demo_repair,
+    "policy": demo_policy,
+    "learn": demo_learn,
+    "induce": demo_induce,
+    "correct": demo_correct,
+}
