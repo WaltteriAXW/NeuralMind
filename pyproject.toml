@@ -27,8 +27,21 @@ rdf = ["rdflib>=6.0"]
 numeric = ["numpy>=1.23"]
 text = ["spacy>=3.5"]
 vision = ["torch>=2.0"]
-dev = ["pytest>=7.0", "numpy>=1.23", "rdflib>=6.0"]
-all = ["clingo>=5.6", "rdflib>=6.0", "numpy>=1.23"]
+# Workspace specialists. Each is genuinely optional: without it, the questions
+# it would have answered come back "unknown" naming what is missing, and
+# nothing else changes.
+arithmetic = ["z3-solver>=4.12"]
+units = ["pint>=0.20"]
+graph = ["networkx>=3.0"]
+specialists = ["z3-solver>=4.12", "pint>=0.20", "networkx>=3.0"]
+dev = [
+  "pytest>=7.0", "numpy>=1.23", "rdflib>=6.0",
+  "z3-solver>=4.12", "pint>=0.20", "networkx>=3.0",
+]
+all = [
+  "clingo>=5.6", "rdflib>=6.0", "numpy>=1.23",
+  "z3-solver>=4.12", "pint>=0.20", "networkx>=3.0",
+]
 
 [project.scripts]
 neuralmind = "neuralmind.cli:main"

@@ -29,6 +29,21 @@ to exist from the start or there is nothing to look back at.
 ``brief`` is one line under a word budget, with every clause traceable to a
 node of the proof. See :mod:`neuralmind.output.brief`.
 
+**More than one kind of reasoning.** :meth:`solve` goes through the workspace
+(:mod:`neuralmind.workspace`), where a logic engine, a constraint solver, a
+unit converter and a graph search meet on a blackboard. Each posts atoms with
+their own proofs, so one tree spans all of them:
+
+    safe(beam1)  (by a design rule)
+    |-- beam(beam1)  [given]
+    `-- leq(beam1_load, beam1_rating)  [by arithmetic: 3200 <= 5000]
+        |-- value(beam1_load, 3200)  [by units: 3200 N = 3200 kg*m/s^2]
+        `-- value(beam1_rating, 5000)  [by units: 5 kN = 5000 kg*m/s^2]
+
+Every specialist but the logic one is optional, and a missing backend costs
+exactly the questions that needed it -- they come back ``unknown`` naming what
+is missing.
+
 Usage::
 
     mind = Mind()
@@ -116,6 +131,8 @@ class Mind:
         self.observations: list[Observation] = []
         self._perceptor = perceptor
         self._engine: Optional[ReasoningEngine] = None
+        self._workspace = None
+        self._controller = None
 
     # -- parts built on demand ---------------------------------------------
 
@@ -134,8 +151,58 @@ class Mind:
             self._engine = self.knowledge.engine()
         return self._engine
 
+    @property
+    def workspace(self):
+        """The blackboard every specialist reads and writes."""
+        if self._workspace is None:
+            from .workspace import Workspace
+
+            self._workspace = Workspace()
+            self._seed_workspace()
+        return self._workspace
+
+    @property
+    def controller(self):
+        """The controller over the specialists, warmed on first use.
+
+        Warming happens here rather than inside a query because importing z3
+        and building pint's unit registry together cost about 300ms -- more
+        than ten times a realistic per-query budget, and paid exactly once.
+        Charging that to whichever question came first would make the budget
+        meaningless.
+        """
+        if self._controller is None:
+            from .workspace import Controller
+            from .workspace.specialists import default_specialists
+
+            self._controller = Controller(
+                self.workspace,
+                default_specialists(self.knowledge),
+                budget_ms=self.budget_ms,
+            )
+        return self._controller
+
+    def _seed_workspace(self) -> None:
+        """Put what is already known on the blackboard as given facts."""
+        from .inference.proof import FACT, ProofNode
+
+        for record in self.knowledge.facts:
+            self._workspace.post(
+                record.atom,
+                ProofNode(record.atom, FACT, confidence=None),
+                source="given",
+                confidence=record.confidence,
+            )
+
     def _invalidate(self) -> None:
         self._engine = None
+        if self._workspace is not None:
+            self._seed_workspace()
+        if self._controller is not None:
+            for specialist in self._controller.router.specialists:
+                invalidate = getattr(specialist, "invalidate", None)
+                if invalidate is not None:
+                    invalidate()
 
     # -- input --------------------------------------------------------------
 
@@ -191,6 +258,22 @@ class Mind:
         goal = self._as_goal(question)
         return self.engine.ask(goal, **kwargs)
 
+    def solve(self, question: Union[str, Atom], budget_ms: Optional[float] = None):
+        """Answer through the workspace, using every specialist that applies.
+
+        Use this where :meth:`ask` is not enough: a question that needs numbers,
+        units or paths as well as rules. The answer is a
+        :class:`~neuralmind.workspace.controller.Conclusion`, carrying one proof
+        that spans whichever specialists contributed.
+        """
+        return self.controller.solve(self._as_goal(question), budget_ms)
+
+    def specialists(self) -> dict:
+        """Which specialists are installed. Part of the self-report."""
+        from .workspace.specialists import installed
+
+        return installed()
+
     def brief(self, answer: Answer, length: str = "brief", max_words: int = BRIEF_WORDS) -> str:
         """One line for a status bar, an alert or a speech bubble."""
         return render_brief(answer, self.realiser, length, max_words).text
@@ -216,17 +299,28 @@ class Mind:
         rules = len(self.knowledge.rules.derivation_rules)
         seen = len(self.observations)
         unread = sum(1 for o in self.observations if not o.understood)
-        lines = [
-            f"Context unresolved — {seen} observation(s) in, "
-            f"{unread} not yet interpretable."
-        ]
-        lines.append(f"Knowledge: {facts} fact(s), {rules} rule(s).")
+        # Three sentences, each about one thing: where it is, what it knows,
+        # what it cannot do. Every clause is read off state -- nothing here is
+        # estimated, which is what makes the report safe to show a user.
         open_predicates = sorted(
             f"{name}/{arity}" for name, arity in self.knowledge.rules.open_predicates
         )
-        if open_predicates:
+        knowledge = f"Knowledge: {facts} fact(s), {rules} rule(s)"
+        if self.knowledge.rules.open_world:
+            knowledge += ", open-world"
+        elif open_predicates:
+            knowledge += ", open on " + ", ".join(open_predicates)
+        lines = [
+            f"Context unresolved — {seen} observation(s) in, "
+            f"{unread} not yet interpretable.",
+            knowledge + ".",
+        ]
+        missing = sorted(name for name, ready in self.specialists().items() if not ready)
+        if missing:
             lines.append(
-                "Open (silence means unknown): " + ", ".join(open_predicates) + "."
+                "Cannot: " + ", ".join(missing)
+                + f" question(s) — {'those specialists are' if len(missing) > 1 else 'that specialist is'}"
+                " not installed."
             )
         return " ".join(lines)
 

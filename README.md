@@ -66,6 +66,48 @@ clause names an atom the proof contains, and a test reads them back to check.
 Across 1,440 corpus answers, 100% fit the 25-word budget and every clause
 traced to a node.
 
+## More than one kind of reasoning
+
+Deduction is not the only thing a question can need. `mind.solve()` goes
+through a **blackboard** where four specialists meet — the logic engine, a
+constraint solver (Z3), a unit converter (pint) and a graph search (NetworkX).
+Each posts ground atoms carrying their own proofs, which is what lets one tree
+span all of them:
+
+```console
+$ neuralmind reason --scenario workshop signed_off
+
+signed_off  (by sign off needs every beam safe and a frame that fits)
+├── safe(beam_a)  (by a beam is safe when its load is within its rating)
+│   ├── beam(beam_a)  [given]
+│   └── leq(beam_a_load, beam_a_rating)  [by arithmetic: 3200 <= 5000]
+│       ├── value(beam_a_load, 3200)  [by units: 3200 N = 3200 kg·m/s²]
+│       └── value(beam_a_rating, 5000)  [by units: 5 kN = 5000 kg·m/s²]
+├── shippable  (by nothing ships until it has been inspected)
+│   └── before(cut, ship)  [by graph: cut -> deburr -> paint -> inspect -> ship]
+└── fits  (by the frame fits when the span clears the opening)
+    └── leq(span, clearance)  [by arithmetic: 4.2 <= 5]
+```
+
+Each specialist earns its place by doing something Datalog cannot. A constraint
+solver runs a relation **backwards** — state `total = x + y` once and ask for
+any of the three, where Datalog needs a rule per direction. A graph search
+finds the *shortest* path, which a least model cannot express because it is a
+minimum over derivations. The unit layer is what makes `3200 N` and `5 kN`
+comparable at all, and it refuses to add a length to a duration.
+
+Every specialist but the logic one is optional, and a missing one costs exactly
+the questions that needed it:
+
+```
+leq(load, rating) → unknown
+  arithmetic: the arithmetic specialist needs z3-solver: pip install neuralmind[arithmetic]
+```
+
+On 50 hand-written mixed questions, all 50 are answered correctly within a
+10 ms budget, with a worst-case overshoot of 8.9%. Under a budget too small to
+finish, answers weaken to `unknown` — never to a wrong answer.
+
 ## Talk to it
 
 `neuralmind shell` is an interactive session — a REPL, not a chat interface,

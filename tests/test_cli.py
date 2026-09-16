@@ -193,3 +193,46 @@ def test_eval_on_the_real_corpus(capsys):
     document = json.loads(out)
     assert document["accuracy"] == 1.0
     assert document["failure_breakdown"] == {}
+
+
+# -- Phase Two: reasoning with specialists ---------------------------------
+
+
+def _all_specialists() -> bool:
+    from neuralmind.workspace.specialists import installed
+
+    return all(installed().values())
+
+
+@pytest.mark.skipif(not _all_specialists(), reason="not every specialist is installed")
+def test_reason_prints_one_proof_across_specialists(capsys):
+    code, out, _ = run(capsys, "reason", "--scenario", "workshop", "signed_off")
+    assert code == 0
+    assert "by arithmetic" in out and "by units" in out and "by graph" in out
+
+
+@pytest.mark.skipif(not _all_specialists(), reason="not every specialist is installed")
+def test_reason_says_why_when_it_cannot_answer(capsys):
+    code, out, _ = run(capsys, "reason", "--scenario", "workshop", "safe(beam_b)")
+    assert code == 1
+    assert "unknown" in out and "leq(beam_b_load, beam_b_rating)" in out
+
+
+@pytest.mark.skipif(not _all_specialists(), reason="not every specialist is installed")
+def test_reason_reports_who_ran(capsys):
+    code, out, _ = run(capsys, "reason", "--scenario", "workshop", "-v", "fits")
+    assert code == 0
+    assert "consulted:" in out and "round(s)" in out
+
+
+def test_reason_works_on_plain_rules_without_a_scenario(capsys):
+    code, out, _ = run(capsys, "reason", "-f", "cat(bob)", "cat(bob)")
+    assert code == 0 and "cat(bob)" in out
+
+
+@pytest.mark.skipif(not _all_specialists(), reason="not every specialist is installed")
+def test_reason_emits_json(capsys):
+    code, out, _ = run(capsys, "reason", "--json", "--scenario", "workshop", "fits")
+    payload = json.loads(out)
+    assert code == 0
+    assert payload["status"] == "yes" and "proof" in payload

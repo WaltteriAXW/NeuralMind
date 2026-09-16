@@ -21,7 +21,28 @@ which one applies is declared per predicate (`#open`, `#closed`, or a bare
 through strong negation: `-flies(pingu)` is a claim, `not flies(pingu)` is an
 absence, and deriving both `p` and `-p` is reported as a contradiction.
 
+`Mind.solve()` goes through the workspace (below) rather than straight to the
+engine, so a question that needs numbers, units or paths as well as rules gets
+one answer with one proof.
+
 See `docs/phase-two-status.md` for what is built and what is not.
+
+## 0b. The workspace (`neuralmind/workspace/`)
+
+A blackboard, four specialists and a controller over them. The blackboard is
+the right shape because a pipeline cannot hold two kinds of reasoning that are
+not downstream of each other — a constraint solver and a graph search have
+nothing to say to one another through a pipe.
+
+Everything posted is a ground atom with a justification, so a result from the
+arithmetic specialist is, to the logic engine, indistinguishable from a given
+fact. That one property is what makes a proof tree span all four specialists
+instead of stopping at the first seam.
+
+The controller works an agenda under a cooperative time budget and always
+answers: running out of time yields `unknown` with the reason, never a hang.
+Every specialist but `logic` is optional, and a missing backend costs exactly
+its own questions.
 
 ## 1. Perception (`neuralmind/perception/`)
 

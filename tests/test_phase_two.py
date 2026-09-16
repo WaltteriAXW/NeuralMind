@@ -481,3 +481,51 @@ def _sources(answer) -> set:
             if attempt.missing is not None:
                 found.add(str(attempt.missing))
     return found
+
+
+# -- P2.1: the workspace, reached through Mind -----------------------------
+
+
+def test_the_self_report_says_what_it_cannot_do():
+    """A specialist that is not installed is a limit, and limits are reported."""
+    mind = Mind()
+    report = mind.self_report()
+    missing = [name for name, ready in mind.specialists().items() if not ready]
+    assert report.count(".") <= 3
+    if missing:
+        assert "Cannot" in report and missing[0] in report
+    else:
+        assert "Cannot" not in report
+
+
+def test_the_mind_solves_through_the_workspace():
+    """Mind.solve goes through the specialists; Mind.ask stays deductive."""
+    from neuralmind.workspace.specialists import installed
+
+    if not all(installed().values()):
+        pytest.skip("not every specialist backend is installed")
+    from neuralmind.workspace.scenarios import WORKSHOP_FACTS, WORKSHOP_RULES
+
+    mind = Mind(budget_ms=2000)
+    mind.add_rules(WORKSHOP_RULES)
+    mind.add_rules(WORKSHOP_FACTS)
+    conclusion = mind.solve("safe(beam_a)")
+    assert conclusion.status == "yes"
+    assert "arithmetic" in conclusion.consulted
+
+    # The plain deductive path cannot reach it: the inequality is not a fact
+    # and no rule derives it, so ask() is right to say it does not hold.
+    assert not mind.ask("safe(beam_a)").holds
+
+
+def test_telling_the_mind_something_new_reaches_the_specialists():
+    """A blackboard that went stale would answer from a world that moved on."""
+    from neuralmind.workspace.specialists import installed
+
+    if not installed()["graph"]:
+        pytest.skip("networkx not installed")
+    mind = Mind(budget_ms=1000)
+    mind.add_rules("edge(a, b).")
+    assert mind.solve("reachable(a, c)").status == "unknown"
+    mind.add_rules("edge(b, c).")
+    assert mind.solve("reachable(a, c)").status == "yes"

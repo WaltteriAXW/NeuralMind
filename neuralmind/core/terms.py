@@ -56,20 +56,38 @@ class Var(Term):
 
 @dataclass(frozen=True)
 class Const(Term):
-    """A constant: a symbol (``alice``), a quoted string, or an integer."""
+    """A constant: a symbol (``alice``), a quoted string, or a number.
 
-    value: Union[str, int]
+    On floats: the logic language is integer-only, because ASP is. A float can
+    still be carried here, because the specialists in
+    :mod:`neuralmind.workspace` measure and solve over reals -- 4200 mm is 4.2
+    metres and rounding it would be a wrong answer, not a simplification. The
+    two are kept apart by :attr:`is_number`, which stays integer-only and is
+    what the engine's arithmetic checks, and :attr:`is_numeric`, which includes
+    floats and is what the specialists use. A float constant is outside the
+    ASP subset and cannot be sent to clingo.
+    """
+
+    value: Union[str, int, float]
     quoted: bool = False
 
     def __str__(self) -> str:
         if self.quoted:
             escaped = str(self.value).replace("\\", "\\\\").replace('"', '\\"')
             return f'"{escaped}"'
+        if isinstance(self.value, float):
+            return f"{self.value:g}"
         return str(self.value)
 
     @property
     def is_number(self) -> bool:
-        return isinstance(self.value, int)
+        """An ASP integer -- what the engine's arithmetic operates on."""
+        return isinstance(self.value, int) and not isinstance(self.value, bool)
+
+    @property
+    def is_numeric(self) -> bool:
+        """Any number, float included. For the specialists, not the engine."""
+        return isinstance(self.value, (int, float)) and not isinstance(self.value, bool)
 
 
 @dataclass(frozen=True)
@@ -196,8 +214,8 @@ class Literal:
         return self.atom.signature
 
 
-def _order_key(const: Const) -> tuple[int, Union[int, str]]:
-    return (0, const.value) if isinstance(const.value, int) else (1, str(const.value))
+def _order_key(const: Const) -> tuple[int, Union[float, str]]:
+    return (0, const.value) if const.is_numeric else (1, str(const.value))
 
 
 def is_ground(term: Term) -> bool:
@@ -251,6 +269,13 @@ def evaluate(term: Term, subst: Substitution) -> Const:
         left = evaluate(term.left, subst)
         right = evaluate(term.right, subst)
         if not (left.is_number and right.is_number):
+            if left.is_numeric and right.is_numeric:
+                # Truncating here would be a silently wrong answer. The
+                # arithmetic specialist handles reals; the engine does not.
+                raise ValueError(
+                    f"the logic engine's arithmetic is integer-only, like ASP's; "
+                    f"{left} {term.op} {right} needs the arithmetic specialist"
+                )
             raise ValueError(f"arithmetic on non-numeric terms: {left} {term.op} {right}")
         a, b = int(left.value), int(right.value)
         if term.op == "+":

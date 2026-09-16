@@ -14,13 +14,14 @@ from typing import Optional
 from ..core.terms import Atom
 from .model import Justification, Model, Violation
 
-__all__ = ["ProofNode", "explain", "explain_violation", "ProofError"]
+__all__ = ["ProofNode", "explain", "explain_violation", "ProofError", "SPECIALIST"]
 
 #: How a node is established.
 FACT = "fact"            # given as input
 DERIVED = "derived"      # concluded by a rule
 CLOSED_WORLD = "closed-world"  # assumed false because it is not derivable
 UNPROVEN = "unproven"    # atom is not in the model at all
+SPECIALIST = "specialist"  # concluded by a non-deductive specialist
 
 
 class ProofError(Exception):

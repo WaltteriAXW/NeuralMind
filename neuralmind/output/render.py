@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from ..inference.model import Model, Violation
-from ..inference.proof import CLOSED_WORLD, FACT, ProofNode
+from ..inference.proof import CLOSED_WORLD, FACT, SPECIALIST, ProofNode
 
 __all__ = ["render_proof", "render_model", "render_violations"]
 
@@ -58,6 +58,13 @@ def _label(node: ProofNode) -> str:
         text = f"{text}  {marker}"
     if node.confidence is not None:
         text = f"{text}  (confidence {node.confidence:.2f})"
+    if node.kind == SPECIALIST:
+        # A specialist's step is the interesting part -- "3.2 kN <= 5.0 kN"
+        # says why, where the specialist's name alone only says who.
+        name = node.rule_label or node.rule_source or "specialist"
+        step = node.rule_instance
+        text = f"{text}  [by {name}: {step}]" if step else f"{text}  [by {name}]"
+        return text
     if node.kind not in (FACT, CLOSED_WORLD):
         source = node.rule_label or node.rule_source
         if source:

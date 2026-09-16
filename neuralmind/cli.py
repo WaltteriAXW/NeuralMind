@@ -5,6 +5,7 @@
     neuralmind read     turn English into facts and rules
     neuralmind check    report integrity-constraint violations
     neuralmind solve    print the whole model
+    neuralmind reason   answer a question with every specialist, in one proof
     neuralmind induce   learn rules from examples
     neuralmind demo     run one of the roadmap phases end to end
     neuralmind eval     benchmark the pipeline and attribute its failures
@@ -149,6 +150,52 @@ def cmd_check(args) -> int:
                 print(render_proof(proof))
                 print()
     return 1 if violations else 0
+
+
+def cmd_reason(args) -> int:
+    """Answer one question through the workspace, using every specialist."""
+    from .core.parser import parse_atom
+    from .workspace import Controller
+    from .workspace.scenarios import workshop
+    from .workspace.specialists import default_specialists, installed
+
+    if args.scenario == "workshop":
+        kb, workspace = workshop()
+    else:
+        from .workspace import Workspace
+        from .inference.proof import FACT, ProofNode
+
+        kb = _build_kb(args.rules, args.fact, args.facts_file)
+        _read_text(args, kb)
+        workspace = Workspace()
+        for record in kb.facts:
+            workspace.post(record.atom, ProofNode(record.atom, FACT), "given")
+
+    controller = Controller(workspace, default_specialists(kb), budget_ms=args.budget)
+    controller.warm()
+    conclusion = controller.solve(parse_atom(args.query))
+
+    if args.json:
+        from .output.serialize import to_json
+
+        print(to_json(conclusion.to_dict()))
+        return 0 if conclusion.status == "yes" else 1
+
+    if conclusion.proof is not None:
+        from .output.render import render_proof
+
+        print(render_proof(conclusion.proof))
+    else:
+        print(f"{conclusion.goal}: {conclusion.status} — {conclusion.reason}")
+    if args.verbose:
+        missing = [name for name, ready in installed().items() if not ready]
+        print(
+            f"\n  consulted: {', '.join(dict.fromkeys(conclusion.consulted)) or 'nobody'}"
+            f"  ·  {conclusion.rounds} round(s)  ·  {conclusion.elapsed_ms:.1f}ms"
+        )
+        if missing:
+            print(f"  not installed: {', '.join(sorted(missing))}")
+    return 0 if conclusion.status == "yes" else 1
 
 
 def cmd_solve(args) -> int:
@@ -377,6 +424,25 @@ def build_parser() -> argparse.ArgumentParser:
     solve.add_argument("-p", "--predicate", action="append", default=[], help="restrict output")
     solve.add_argument("--json", action="store_true")
     solve.set_defaults(func=cmd_solve)
+
+    reason = sub.add_parser(
+        "reason", help="answer a question using every specialist, with one proof"
+    )
+    _add_kb_arguments(reason)
+    reason.add_argument("query", help="an atom such as 'safe(beam_a)'")
+    reason.add_argument(
+        "--scenario",
+        choices=("workshop",),
+        help="use a built-in scenario instead of the rules given",
+    )
+    reason.add_argument(
+        "--budget", type=float, default=200.0, help="time budget in ms (default: 200)"
+    )
+    reason.add_argument(
+        "-v", "--verbose", action="store_true", help="show which specialists ran"
+    )
+    reason.add_argument("--json", action="store_true")
+    reason.set_defaults(func=cmd_reason)
 
     verify = sub.add_parser("verify", help="re-derive the model with clingo and compare")
     _add_kb_arguments(verify)

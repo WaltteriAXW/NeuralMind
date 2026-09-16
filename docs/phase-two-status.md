@@ -12,7 +12,7 @@ with no test is not done, whatever the code says.
 | Milestone | Goal | State |
 |---|---|---|
 | P2.0 — `Mind` facade and honest answers | One entry point, three-valued answers, short lines | **done** |
-| P2.1 — Workspace, specialists, controller | A place where kinds of reasoning meet | not started |
+| P2.1 — Workspace, specialists, controller | A place where kinds of reasoning meet | **done** |
 | P2.2 — Safety kernel | Explore without breaking; always a way back | not started |
 | P2.3 — Growth loop | Notice gaps and close them | not started |
 | P2.4 — Self-model and context discovery | Work out where it is, and say so | not started |
@@ -23,6 +23,113 @@ with no test is not done, whatever the code says.
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
 | P2.13 — The school | One command reproduces every number | not started |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.1 — the workspace
+
+### Why a blackboard rather than another pipeline stage
+
+Phase One was a pipeline, and a pipeline cannot hold two kinds of reasoning
+that are not downstream of each other. An arithmetic solver and a graph search
+have nothing to say to one another through a pipe, because neither comes after
+the other.
+
+A blackboard is the classical answer and the right one here for a specific
+reason: everything on it is a ground atom with a justification, so a result
+posted by the constraint solver is, to the logic engine, indistinguishable from
+a fact that was given. They reason over each other's conclusions without either
+knowing the other exists.
+
+### Four specialists, one protocol
+
+| Specialist | Backend | What it adds over Datalog |
+|---|---|---|
+| `logic` | the Phase One engine | deduction; never optional |
+| `arithmetic` | Z3 | runs a relation **backwards** — one statement of `total = x + y` answers for any of the three |
+| `units` | pint | dimensions, conversion, and refusing to add a length to a duration |
+| `graph` | NetworkX | *shortest* path — a least model cannot express a minimum over derivations |
+
+Each implements `accepts(goal) -> float` and `run(goal, workspace, budget)`,
+and obeys one rule: **every result carries its own proof**. That is what lets
+a tree span all of them:
+
+```
+signed_off  (by sign off needs every beam safe and a frame that fits)
+├── safe(beam_a)  (by a beam is safe when its load is within its rating)
+│   ├── beam(beam_a)  [given]
+│   └── leq(beam_a_load, beam_a_rating)  [by arithmetic: 3200 <= 5000]
+│       ├── value(beam_a_load, 3200)  [by units: 3200 N = 3200 kg·m/s²]
+│       └── value(beam_a_rating, 5000)  [by units: 5 kN = 5000 kg·m/s²]
+├── shippable  (by nothing ships until it has been inspected)
+│   └── before(cut, ship)  [by graph: cut -> deburr -> paint -> inspect -> ship]
+└── fits  (by the frame fits when the span clears the opening)
+    └── leq(span, clearance)  [by arithmetic: 4.2 <= 5]
+```
+
+One derivation, four specialists, no seams. The arithmetic proof cites Z3's
+**unsat core** rather than the whole constraint system, so every constraint
+named genuinely contributed and none that contributed is missing.
+
+### Measured
+
+Fifty hand-written mixed questions (`neuralmind/workspace/scenarios.py`) over
+one workshop scenario — unit conversions, load checks, multi-way solving,
+assembly ordering, and rules that span all of it:
+
+| Budget | Worst overshoot | Correct |
+|---|---|---|
+| 200 ms | −94% | 50/50 |
+| 50 ms | −74% | 50/50 |
+| 20 ms | −40% | 50/50 |
+| 10 ms | **+8.9%** | 50/50 |
+| 5 ms | +49% | 50/50 |
+| 1 ms | +318% | 41/50 |
+
+The 10% bar holds from 10ms up. Below that it cannot: nothing in Python can
+safely interrupt a call, so the overshoot is bounded by **one specialist call**
+rather than by a percentage, and the controller does not pretend otherwise.
+
+The property that makes a short budget safe is the direction of failure. Every
+miss at 1ms is `yes → unknown`; a query cut short never answers `no` and never
+answers a different `yes`. Warming is paid up front and outside the budget —
+importing z3 and building pint's registry cost ~300ms together, more than ten
+times a realistic query, and charging that to whichever question came first
+would make the budget meaningless.
+
+Degrading is per-specialist. Removing one costs exactly the questions that
+needed it, and a missing *backend* is reported rather than hidden:
+
+```
+leq(load, rating) → unknown
+  arithmetic: the arithmetic specialist needs z3-solver: pip install neuralmind[arithmetic]
+```
+
+### Bugs this cost
+
+- **Goals leaked between queries.** Facts persist on a blackboard; agendas must
+  not. A leftover subgoal was being taken instead of the current question and
+  answered with a reason belonging to another query.
+- **A livelock on an unreachable subgoal.** The controller re-posts a goal
+  under its subgoals so it is retried once they land — and then re-derived the
+  same failing subgoal until the budget ran out, reporting "out of time" for
+  something it had settled on the first attempt.
+- **The logic specialist re-pushed the whole blackboard on every call**,
+  invalidating its cached model each time. Handing over only the delta took the
+  mixed set from ~400ms to 142ms.
+- **`max_rounds` was a performance knob pretending to be a safety net.** A
+  chain across three specialists needs about twenty rounds; the limit was 16.
+- **Floats had nowhere to live.** 4200 mm is 4.2 m and rounding it is a wrong
+  answer, not a simplification. `Const.is_number` stays integer-only — it is
+  what the engine's ASP arithmetic checks — and `is_numeric` includes floats
+  for the specialists. The engine now refuses float arithmetic rather than
+  truncating it.
+
+### What P2.1 does not do
+
+- **The router is rule-based.** The roadmap has it becoming a classifier over
+  logged routing decisions; until those logs exist, a learned router would be a
+  guess wearing a confidence score.
+- **No parallelism.** Specialists run one at a time.
+- **Budgets are cooperative**, not enforced. See above for why.
 
 ## P2.0 — the `Mind` facade and honest answers
 
