@@ -7,6 +7,7 @@
     neuralmind induce   learn rules from examples
     neuralmind demo     run one of the roadmap phases end to end
     neuralmind eval     benchmark the pipeline and attribute its failures
+                        (--corpus for the real ProofWriter data)
     neuralmind verify   re-derive the model with clingo and compare
 """
 
@@ -177,11 +178,41 @@ def cmd_verify(args) -> int:
 
 
 def cmd_eval(args) -> int:
-    from .datasets.proofwriter import generate
     from .evaluation import evaluate
 
-    problems = generate(args.problems, seed=args.seed, questions=args.questions)
-    report = evaluate(problems)
+    perceptor = None
+    if args.corpus:
+        from .datasets import proofwriter_corpus
+        from .perception.controlled import TripleSchema
+        from .perception.text import TextPerceptor
+
+        if args.corpus not in proofwriter_corpus.SPLITS:
+            print(
+                f"unknown split {args.corpus!r}; choose from "
+                + ", ".join(proofwriter_corpus.SPLITS),
+                file=sys.stderr,
+            )
+            return 2
+        if not proofwriter_corpus.available(args.corpus):
+            print(
+                f"the '{args.corpus}' split is not downloaded. Run "
+                "`python scripts/download_proofwriter.py`.",
+                file=sys.stderr,
+            )
+            return 2
+        problems = proofwriter_corpus.load(args.corpus, limit=args.problems)
+        # These theories need one predicate per attribute: under the triple
+        # schema every atom is attr/2, and a rule like "if smart and not white
+        # then round" makes attr depend negatively on itself.
+        perceptor = TextPerceptor(schema=TripleSchema("direct"))
+        if not args.json:
+            print(f"ProofWriter corpus, {args.corpus}: {len(problems)} problems")
+    else:
+        from .datasets.proofwriter import generate
+
+        problems = generate(args.problems, seed=args.seed, questions=args.questions)
+
+    report = evaluate(problems, perceptor=perceptor)
     if args.json:
         from .output.serialize import to_json
 
@@ -320,6 +351,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     evaluate_parser = sub.add_parser("eval", help="benchmark the pipeline")
     evaluate_parser.add_argument("-n", "--problems", type=int, default=50)
+    evaluate_parser.add_argument(
+        "--corpus",
+        metavar="SPLIT",
+        help="evaluate on the real ProofWriter corpus instead of generated "
+        "problems: depth-0..depth-5, birds-electricity, NatLang",
+    )
     evaluate_parser.add_argument("-q", "--questions", type=int, default=6)
     evaluate_parser.add_argument("--seed", type=int, default=0)
     evaluate_parser.add_argument("--json", action="store_true")

@@ -200,18 +200,19 @@ def evaluate(
         gold_engine = _gold_engine(problem)
         for question in problem.questions:
             goal_atom = _goal_atom(question.goal)
-            detail = ""
-            try:
-                asked = perceptor.parse_question(question.text)
-            except Exception as exc:
-                asked = None
-                detail = f"question not parsed: {exc}"
-            question_matches = asked == goal_atom
-            predicted = bool(asked is not None and engine.model.holds(asked))
+            asked, asked_negated, detail = _read_query(perceptor, question.text)
+            question_matches = asked == goal_atom and asked_negated == question.negated
+            derived = bool(asked is not None and engine.model.holds(asked))
+            # A negative question ("The mouse is not blue.") is true exactly
+            # when the goal is not derivable. The *perceived* polarity is used
+            # here, not the gold one: misreading the polarity is a real
+            # end-to-end failure and must show up as one.
+            predicted = (not derived) if asked_negated else derived
 
             failure: Optional[str] = None
             if predicted != question.answer:
-                gold_predicted = gold_engine.holds(goal_atom)
+                gold_derived = gold_engine.holds(goal_atom)
+                gold_predicted = (not gold_derived) if question.negated else gold_derived
                 if gold_predicted != question.answer:
                     failure = ENGINE
                     detail = detail or "engine disagrees with the gold closure"
@@ -246,6 +247,37 @@ def _goal_atom(goal: tuple) -> Atom:
     return Atom(goal[0], tuple(Const(part) for part in goal[1:]))
 
 
+def _read_query(perceptor, text: str) -> tuple[Optional[Atom], bool, str]:
+    """Read a question, whether it is phrased as one or as a statement.
+
+    Generated benchmarks ask "Is Bob green?"; the ProofWriter corpus asserts
+    "The mouse is not blue." and expects a true/false judgement. Both go
+    through the perception layer, so a question the system cannot read counts
+    against it exactly as a theory sentence would.
+
+    Returns ``(goal atom, negated, detail)``.
+    """
+    stripped = text.strip()
+    if stripped.endswith("?"):
+        parser = getattr(perceptor, "parse_question", None)
+        if parser is not None:
+            try:
+                return parser(stripped), False, ""
+            except Exception as exc:
+                return None, False, f"question not parsed: {exc}"
+    perception = perceptor.perceive(stripped)
+    if len(perception.facts) != 1:
+        return (
+            None,
+            False,
+            f"statement produced {len(perception.facts)} facts, expected exactly one",
+        )
+    atom = perception.facts[0].atom
+    if atom.predicate.startswith("not_"):
+        return Atom(atom.predicate[4:], atom.args), True, ""
+    return atom, False, ""
+
+
 def _gold_engine(problem: Problem):
     """Run the engine on the gold theory, to separate engine bugs from the rest."""
     rules = [Rule(_goal_atom(fact), ()) for fact in problem.gold_facts]
@@ -253,17 +285,31 @@ def _gold_engine(problem: Problem):
         rules.append(
             Rule(
                 head=_template_atom(head),
-                body=tuple(Literal(_template_atom(literal)) for literal in body),
+                body=tuple(_template_literal(literal) for literal in body),
             )
         )
     return ForwardChainer(Program(rules=rules)).run()
 
 
 def _template_atom(literal: tuple) -> Atom:
+    """Build an atom from a gold template, stripping any negation marker."""
+    predicate = literal[0]
+    if predicate.startswith("not_"):
+        predicate = predicate[4:]
     return Atom(
-        literal[0],
+        predicate,
         tuple(Var("X") if part == "?" else Const(part) for part in literal[1:]),
     )
+
+
+def _template_literal(literal: tuple) -> Literal:
+    """A body literal, negated when the gold template marks it so.
+
+    A negated condition has to become negation-as-failure, not a positive
+    literal over a predicate named ``not_p``: the latter is never derived, so
+    the rule would simply never fire.
+    """
+    return Literal(_template_atom(literal), negated=literal[0].startswith("not_"))
 
 
 def _normalise_rule(rule: Rule) -> tuple:
@@ -271,9 +317,9 @@ def _normalise_rule(rule: Rule) -> tuple:
     assert rule.head is not None
     head = _atom_template(rule.head)
     body = frozenset(
-        _atom_template(part.atom)
+        _atom_template(part.atom, negated=part.negated)
         for part in rule.body
-        if isinstance(part, Literal) and not part.negated
+        if isinstance(part, Literal)
     )
     return (head, body)
 
@@ -283,8 +329,11 @@ def _normalise_gold_rule(rule: tuple) -> tuple:
     return (tuple(head), frozenset(tuple(literal) for literal in body))
 
 
-def _atom_template(atom: Atom) -> tuple:
-    parts = [atom.predicate]
+def _atom_template(atom: Atom, negated: bool = False) -> tuple:
+    predicate = atom.predicate
+    if negated and not predicate.startswith("not_"):
+        predicate = f"not_{predicate}"
+    parts = [predicate]
     for argument in atom.args:
         if isinstance(argument, Var):
             parts.append("?")

@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Optional, Sequence
 
-from ..core.program import Program, Rule, Step
+from ..core.program import Program, Rule, StratificationError, Step
 from ..core.terms import Atom, Const, evaluate
 from .model import AtomIndex, Justification, Model, Violation, match_atom
 
@@ -100,7 +100,18 @@ class ForwardChainer:
         self.max_atoms = max_atoms
         self.max_iterations = max_iterations
         self.strict = strict
-        self._strata = program.stratify()
+        #: True when the program needed grounding to find a stratification.
+        self.locally_stratified = False
+        try:
+            self._strata = program.stratify()
+        except StratificationError:
+            # Predicate-level stratification is coarse: it sees
+            # "p(a) :- not p(b)." as recursive negation even though no ground
+            # atom depends on itself. Fall back to grounding and stratifying
+            # atom by atom, which is the same perfect-model semantics on a
+            # strictly larger class of programs.
+            self._strata = program.local_strata()
+            self.locally_stratified = True
 
     # -- public API ------------------------------------------------------
 
@@ -154,7 +165,14 @@ class ForwardChainer:
             derived_this_round: list[Atom] = []
 
             for compiled_rule in derivations:
-                if not (compiled_rule.body_signatures & delta_signatures):
+                # The first round must run every rule. A body with no positive
+                # literals -- "p :- not q(a)." -- has no signatures to
+                # intersect, so the delta guard would skip it forever.
+                # Stratification means such a rule's body cannot change within
+                # this stratum, so one evaluation is also all it needs.
+                if not first_round and not (
+                    compiled_rule.body_signatures & delta_signatures
+                ):
                     continue  # nothing this rule reads has changed
                 if first_round:
                     variants: tuple[Optional[int], ...] = (None,)

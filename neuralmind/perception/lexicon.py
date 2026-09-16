@@ -20,6 +20,9 @@ __all__ = [
     "normalise_symbol",
     "singularise",
     "base_verb",
+    "predicate_name",
+    "PLACEHOLDER_NOUNS",
+    "PARTICLES",
     "strip_determiner",
     "is_variable_phrase",
     "split_sentences",
@@ -33,6 +36,14 @@ QUANTIFIED = frozenset(
     {"someone", "something", "anyone", "anything", "everyone", "everything", "somebody", "anybody", "everybody"}
 )
 PRONOUNS = frozenset({"they", "it", "he", "she", "them", "him", "her", "its", "their"})
+#: Head nouns that carry no meaning of their own -- "All big things are young"
+#: is a statement about big individuals, not about a class called "thing".
+#: Deliberately short: "animals" is a real class, and treating it as a
+#: placeholder would quietly discard a condition.
+PLACEHOLDER_NOUNS = frozenset(
+    {"thing", "things", "people", "person", "persons", "one", "ones",
+     "individual", "individuals"}
+)
 AUXILIARIES = frozenset({"does", "do", "did", "can", "will", "would", "should", "must", "has", "have", "had"})
 
 _IRREGULAR_PLURALS = {
@@ -115,6 +126,30 @@ def base_verb(word: str) -> str:
     if lower.endswith("s") and len(lower) > 2:
         return lower[:-1]
     return lower
+
+
+#: Particles and prepositions that belong to the verb rather than the object:
+#: "the current runs through the circuit" has the two-word verb "runs through".
+PARTICLES = frozenset(
+    {"through", "after", "into", "onto", "up", "over", "with", "at", "on", "off",
+     "out", "in", "from", "to", "by", "about", "around", "across", "against",
+     "for", "down", "away"}
+)
+
+
+def predicate_name(phrase: str) -> str:
+    """Normalise a verb phrase into a predicate identifier.
+
+    The first word goes to its base form and the whole phrase is then
+    normalised: "runs through" becomes ``run_through``. Both the perception
+    layer and the ProofWriter loader call this, so the two sides cannot drift
+    apart on spelling -- a mismatch then means a genuinely different reading.
+    """
+    words = phrase.strip().split()
+    if not words:
+        return "unknown"
+    words = [base_verb(words[0])] + words[1:]
+    return normalise_symbol(" ".join(words))
 
 
 def is_variable_phrase(phrase: str) -> bool:

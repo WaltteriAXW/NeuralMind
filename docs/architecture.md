@@ -83,6 +83,15 @@ produced it.
 matches the goal and reports the furthest point its body got to, which turns
 "no" into something actionable.
 
+**Stratification, locally.** Negation must not be recursive, or there is no
+unique model. Checking that at the predicate level is the textbook version and
+is too coarse for real rule bases: `p(a) :- not p(b).` is perfectly well
+defined, and 6-12% of the ProofWriter corpus looks like it. When the coarse
+check fails, the program is ground over its own constants and stratified atom
+by atom -- *local* stratification, the same perfect-model semantics on a
+strictly larger class of programs. Grounding is bounded and raises rather than
+exhausting memory, and genuine recursion through negation is still refused.
+
 **clingo is the oracle.** It is faster and far more expressive, but it reports
 which atoms are true, not why. `cross_check()` runs both engines on the same
 program and asserts they derive the same atoms, with constraints handled

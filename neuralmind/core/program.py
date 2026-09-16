@@ -12,9 +12,17 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator, Optional, Sequence, Union
 
-from .terms import Atom, Compare, Literal, Var, format_body, variables_in
+from .terms import Atom, Compare, Const, Literal, Var, format_body, ground_term, variables_in
 
-__all__ = ["Rule", "Step", "Program", "SafetyError", "StratificationError", "ProgramError"]
+__all__ = [
+    "Rule",
+    "Step",
+    "Program",
+    "SafetyError",
+    "StratificationError",
+    "GroundingLimit",
+    "ProgramError",
+]
 
 BodyPart = Union[Literal, Compare]
 
@@ -29,6 +37,10 @@ class SafetyError(ProgramError):
 
 class StratificationError(ProgramError):
     """Negation is recursive, so no unique least model exists."""
+
+
+class GroundingLimit(ProgramError):
+    """Grounding the program would produce more rules than allowed."""
 
 
 @dataclass(frozen=True)
@@ -259,10 +271,25 @@ class Program:
     # -- static checks ---------------------------------------------------
 
     def check(self) -> "Program":
-        """Run every static check. Returns ``self`` so it can be chained."""
+        """Run every static check. Returns ``self`` so it can be chained.
+
+        A program that predicate-level stratification rejects may still be
+        *locally* stratified, which is equally well defined and is what the
+        engine falls back to. Checking only the coarse condition here would
+        reject programs the engine can run perfectly well.
+        """
         for rule in self.rules:
             rule.check_safety()
-        self.stratify()
+        try:
+            self.stratify()
+        except StratificationError:
+            try:
+                self.local_strata()
+            except GroundingLimit as exc:
+                raise StratificationError(
+                    "negation is recursive at the predicate level, and the program "
+                    f"is too large to ground and check atom by atom ({exc})"
+                ) from exc
         return self
 
     def stratify(self) -> list[list[Rule]]:
@@ -309,6 +336,113 @@ class Program:
             strata[level[rule.head.signature]].append(rule)
         return strata
 
+    # -- local stratification ---------------------------------------------
+
+    def constant_universe(self) -> list:
+        """Every constant appearing in the program, in a stable order.
+
+        This is the Herbrand universe used for grounding. Distinct from
+        :attr:`constants`, which holds ``#const`` declarations.
+        """
+        seen: dict = {}
+        for rule in self.rules:
+            atoms = [rule.head] if rule.head is not None else []
+            atoms.extend(part.atom for part in rule.body if isinstance(part, Literal))
+            for atom in atoms:
+                for argument in atom.args:
+                    if isinstance(argument, Const):
+                        seen.setdefault((argument.quoted, str(argument.value)), argument)
+        return [seen[key] for key in sorted(seen)]
+
+    def ground(self, max_rules: int = 200_000) -> "Program":
+        """Instantiate every rule over the program's constants.
+
+        Grounding is exponential in the number of variables per rule, so it is
+        guarded by ``max_rules`` and raises :class:`GroundingLimit` rather than
+        exhausting memory. This is a fallback path, not the normal one.
+        """
+        import itertools
+
+        universe = self.constant_universe()
+        grounded: list[Rule] = []
+        for rule in self.rules:
+            names = sorted(_rule_variables(rule))
+            if not names:
+                grounded.append(rule)
+                continue
+            if not universe:
+                continue  # no constants to instantiate with
+            count = len(universe) ** len(names)
+            if len(grounded) + count > max_rules:
+                raise GroundingLimit(
+                    f"grounding {rule.origin()} over {len(universe)} constants and "
+                    f"{len(names)} variables needs {count} instances, past the "
+                    f"{max_rules} limit"
+                )
+            for assignment in itertools.product(universe, repeat=len(names)):
+                subst = dict(zip(names, assignment))
+                head = rule.head.ground(subst) if rule.head is not None else None
+                body = tuple(_ground_part(part, subst) for part in rule.body)
+                grounded.append(
+                    Rule(head, body, source=rule.source, line=rule.line, label=rule.label)
+                )
+        return Program(
+            rules=grounded,
+            shown=set(self.shown),
+            constants=dict(self.constants),
+        )
+
+    def local_strata(self, max_rules: int = 200_000) -> list[list[Rule]]:
+        """Stratify the *ground* program, atom by atom.
+
+        A program can be recursive through negation at the predicate level and
+        still be perfectly well behaved at the ground level. Real rule bases
+        are full of these::
+
+            eat(bald_eagle, squirrel) :- cold(X), not eat(X, bald_eagle).
+
+        ``eat`` depends negatively on ``eat``, so predicate-level
+        stratification rejects the theory -- yet no ground atom depends on
+        itself, so the program is *locally stratified* and has exactly the same
+        kind of unique perfect model. 6-12% of the ProofWriter corpus is like
+        this.
+
+        Returns strata of ground rules. Raises :class:`StratificationError` if
+        the ground program really does have a negative cycle.
+        """
+        ground = self.ground(max_rules=max_rules)
+        level: dict = defaultdict(int)
+        edges: list[tuple] = []
+        for rule in ground.rules:
+            if rule.head is None:
+                continue
+            level[rule.head]
+            for part in rule.body:
+                if isinstance(part, Literal):
+                    level[part.atom]
+                    edges.append((rule.head, part.atom, part.negated))
+
+        for _ in range(len(level) + 1):
+            changed = False
+            for head, body_atom, negated in edges:
+                want = level[body_atom] + (1 if negated else 0)
+                if want > level[head]:
+                    level[head] = want
+                    changed = True
+            if not changed:
+                break
+        else:
+            raise StratificationError(
+                "negation is recursive even after grounding, so this program has "
+                "no unique model. Use the clingo backend for answer-set semantics."
+            )
+
+        strata: list[list[Rule]] = [[] for _ in range(max(level.values(), default=0) + 1)]
+        for rule in ground.rules:
+            if rule.head is not None:
+                strata[level[rule.head]].append(rule)
+        return strata
+
     def stratum_of(self) -> dict[tuple[str, int], int]:
         """Map each predicate to its stratum index."""
         mapping: dict[tuple[str, int], int] = {}
@@ -328,6 +462,23 @@ class Program:
         if include_shown and self.shown:
             lines.extend(f"#show {name}/{arity}." for name, arity in sorted(self.shown))
         return "\n".join(lines)
+
+
+def _rule_variables(rule: Rule) -> set:
+    """Every variable name in a rule's head and body."""
+    names: set = set()
+    if rule.head is not None:
+        names.update(variables_in(rule.head))
+    for part in rule.body:
+        names.update(variables_in(part))
+    return names
+
+
+def _ground_part(part, subst: dict):
+    """Substitute into one body part, keeping its kind."""
+    if isinstance(part, Literal):
+        return Literal(part.atom.ground(subst), negated=part.negated)
+    return Compare(part.op, ground_term(part.left, subst), ground_term(part.right, subst))
 
 
 def _best_join(remaining: Sequence[tuple], bound: set) -> int:

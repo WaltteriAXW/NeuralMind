@@ -44,6 +44,10 @@ class Question:
     answer: bool
     #: Number of rule applications needed; 0 means it was stated outright.
     depth: int
+    #: True when the question asserts the *absence* of the goal, as in
+    #: "The mouse is not blue." Such a question is true exactly when the goal
+    #: is not derivable -- the closed-world reading.
+    negated: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +55,7 @@ class Question:
             "goal": "%s(%s)" % (self.goal[0], ", ".join(self.goal[1:])),
             "answer": self.answer,
             "depth": self.depth,
+            "negated": self.negated,
         }
 
 

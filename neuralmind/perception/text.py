@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 from ..core.terms import Atom, Const, Term
 from ..knowledge.base import FactRecord
@@ -251,9 +251,26 @@ def _with_conjuncts(token) -> list:
 class TextPerceptor:
     """The text perception layer: routes each sentence to the right extractor.
 
-    Sentences that state general rules go to the controlled-English grammar;
-    everything else goes to spaCy when it is installed, and to the controlled
-    grammar otherwise.
+    Sentences that state general rules always go to the controlled grammar, for
+    the reason in the module docstring -- a dependency parse does not tell you
+    a sentence is an implication.
+
+    Fact sentences go to the grammar first and to spaCy only for what the
+    grammar declines. That ordering is measured, not assumed. On the
+    ProofWriter corpus's fact sentences the grammar is exact and spaCy is not:
+
+        split               grammar   spaCy
+        NatLang              100.0%   100.0%
+        depth-5              100.0%    91.5%
+        birds-electricity    100.0%    61.1%
+
+    spaCy's errors are linguistically reasonable ones -- it reads "the bald
+    eagle" as an eagle that is bald, giving ``bald(eagle)`` where the corpus
+    means a single entity ``bald_eagle``. Preferring the deterministic reader
+    and falling back only where it refuses keeps that from happening, without
+    giving up the coverage spaCy provides outside the controlled register.
+
+    Pass ``prefer="spacy"`` to reverse it.
     """
 
     name = "text"
@@ -262,16 +279,21 @@ class TextPerceptor:
         self,
         schema: Optional[TripleSchema] = None,
         model: str = "en_core_web_sm",
-        prefer_spacy: bool = True,
+        use_spacy: bool = True,
+        prefer: str = "grammar",
     ) -> None:
+        if prefer not in ("grammar", "spacy"):
+            raise ValueError(f"prefer must be 'grammar' or 'spacy', not {prefer!r}")
         self.schema = schema or TripleSchema()
         self.controlled = ControlledEnglishParser(self.schema)
-        self.use_spacy = prefer_spacy and spacy_available(model)
+        self.use_spacy = use_spacy and spacy_available(model)
+        self.prefer = prefer
         self.spacy = SpacyTripleExtractor(model, self.schema) if self.use_spacy else None
 
     def perceive(self, raw: str) -> Perception:
         combined = Perception(source=f"text:{self.name}")
         combined.diagnostics["spacy"] = self.use_spacy
+        combined.diagnostics["prefer"] = self.prefer
         rule_sentences: list[str] = []
         fact_sentences: list[str] = []
         for sentence in split_sentences(raw):
@@ -279,24 +301,40 @@ class TextPerceptor:
 
         if rule_sentences:
             combined.extend(self.controlled.perceive(" ".join(rule_sentences)))
+
         if fact_sentences:
-            text = " ".join(fact_sentences)
-            if self.spacy is not None:
-                extracted = self.spacy.perceive(text)
-                # Anything spaCy could not read is retried with the grammar,
-                # which handles the stilted phrasing benchmarks often use.
-                if extracted.unparsed:
-                    retry = self.controlled.perceive(" ".join(extracted.unparsed))
-                    extracted.unparsed = retry.unparsed
-                    extracted.facts.extend(retry.facts)
-                combined.extend(extracted)
+            if self.prefer == "spacy" and self.spacy is not None:
+                first, second = self.spacy, self.controlled
             else:
-                combined.extend(self.controlled.perceive(text))
+                first, second = self.controlled, self.spacy
+            combined.extend(self._read_facts(fact_sentences, first, second))
 
         combined.diagnostics["rule_sentences"] = len(rule_sentences)
         combined.diagnostics["fact_sentences"] = len(fact_sentences)
         combined.diagnostics["unparsed"] = len(combined.unparsed)
         return combined
+
+    def _read_facts(self, sentences: Sequence[str], first, second) -> Perception:
+        """Read each sentence with ``first``, handing the rest to ``second``.
+
+        Sentence by sentence rather than in bulk, because the point is to know
+        exactly which sentences the preferred extractor declined. The fallback
+        still runs as one batch, so the expensive parser is loaded once.
+        """
+        collected = Perception(source=f"text:{self.name}")
+        leftovers: list[str] = []
+        for sentence in sentences:
+            attempt = first.perceive(sentence)
+            if attempt.facts and not attempt.unparsed:
+                collected.extend(attempt)
+            else:
+                leftovers.append(sentence)
+        if leftovers:
+            if second is not None:
+                collected.extend(second.perceive(" ".join(leftovers)))
+            else:
+                collected.unparsed.extend(leftovers)
+        return collected
 
     def parse_question(self, question: str) -> Atom:
         """Turn a yes/no question into the atom to query."""

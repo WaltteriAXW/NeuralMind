@@ -103,6 +103,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | 7 | Say what fraction of failures are perception vs reasoning | **1200/1200** to proof depth 4; attribution built in |
 | — | *beyond the roadmap:* learn perception through the rules | **98.20%** digit accuracy from **zero** digit labels |
 | — | *beyond the roadmap:* learn the rules from examples | recovers `grandparent`, recursive `ancestor`, and negated exceptions |
+| — | *the real benchmark:* ProofWriter corpus | **100%** on all five depth splits; see below |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
@@ -218,13 +219,46 @@ is simply wrong about a case nobody exercised — the clearance check never
 mattered in that data, so it was never learned. `neuralmind demo induce` runs
 both. A learned rule is a proposal for review, not a policy.
 
-**Read the Phase 3/7 numbers honestly.** They are measured on generated
-controlled-English problems in the ProofWriter register, not on the real
-ProofWriter dataset, and the perception layer covers that register by
-construction. The reasoning is exact, so end-to-end accuracy is bounded by
-perception — and on prose outside the controlled subset, perception is where
-it will break. The system reports unparsed sentences rather than guessing at
-them, which is the honest failure mode but still a failure.
+## Measured on the real benchmark
+
+The numbers above are on *generated* problems. Here is the same pipeline on the
+actual **ProofWriter corpus** (Allen Institute for AI) — 34,596 questions over
+2,340 theories it was not written against:
+
+| Split | Accuracy | Questions | Theories extracted exactly |
+|---|---|---|---|
+| depth-0 | **100.0%** | 1,476 | 400/400 |
+| depth-1 | **100.0%** | 3,098 | 400/400 |
+| depth-2 | **100.0%** | 4,344 | 400/400 |
+| depth-3 | **100.0%** | 5,636 | 400/400 |
+| depth-5 | **100.0%** | 8,128 | 400/400 |
+| birds-electricity | **99.9%** | 5,270 | 139/140 |
+| NatLang *(crowdsourced)* | **52.4%** | 6,644 | 0/400 |
+| **overall** | **90.9%** | 34,596 | |
+
+```bash
+python scripts/download_proofwriter.py
+neuralmind eval --corpus depth-5 -n 200
+```
+
+Two things this establishes and one it does not.
+
+**The reasoning is exact.** Across every split, including the ones it does
+badly on, *zero* failures were attributable to the engine — and separately,
+all 890 theories checked derived exactly the same atoms as clingo, atom for
+atom. Accuracy is bounded entirely by perception, which is the architectural
+claim this project exists to test.
+
+**NatLang is the honest ceiling.** That split's theories are crowdsourced
+English rather than generated, and a controlled grammar gets about half of it.
+No amount of grammar engineering closes that gap; it is the weakness the
+architecture is supposed to have, measured rather than argued about.
+
+**It does not establish that this is easy.** Getting the synthetic splits from
+68% to 100% took finding and fixing eight distinct bugs, three of them in the
+engine rather than the language layer. They are listed in
+`docs/roadmap-status.md`, because how the number moved is more informative than
+the number.
 
 ## How it is put together
 
@@ -308,8 +342,10 @@ strengths:
 
 - **Open-domain language.** The controlled grammar covers a register, not
   English. spaCy widens it; neither handles ambiguity, ellipsis, or anything
-  needing world knowledge. This is where the "knowledge acquisition bottleneck"
-  actually bites.
+  needing world knowledge. ProofWriter's crowdsourced NatLang split measures
+  this precisely: **52.4%**, against 100% on the same reasoning in generated
+  phrasing. That gap is the perception layer, and nothing in the symbolic half
+  can close it.
 - **Writing the rules.** Phase 2 is still where the work is. `induction/` learns
   a rule when you can supply examples of the relation *and* a bias tight enough
   to search — which is a real help, not a replacement for knowing the domain.

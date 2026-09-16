@@ -177,3 +177,19 @@ def test_induce_reads_examples_from_a_file(capsys, tmp_path):
 def test_demo_induce_runs(capsys):
     code, out, _ = run(capsys, "demo", "induce")
     assert code == 0 and "Learning rules from examples" in out
+
+
+def test_eval_rejects_an_unknown_corpus_split(capsys):
+    code, _, err = run(capsys, "eval", "--corpus", "depth-9")
+    assert code == 2 and "unknown split" in err
+
+
+def test_eval_on_the_real_corpus(capsys):
+    from neuralmind.datasets import proofwriter_corpus
+
+    if not proofwriter_corpus.available("depth-2"):
+        pytest.skip("ProofWriter corpus not downloaded")
+    code, out, _ = run(capsys, "eval", "--corpus", "depth-2", "-n", "10", "--json")
+    document = json.loads(out)
+    assert document["accuracy"] == 1.0
+    assert document["failure_breakdown"] == {}
