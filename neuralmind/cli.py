@@ -4,6 +4,7 @@
     neuralmind read     turn English into facts and rules
     neuralmind check    report integrity-constraint violations
     neuralmind solve    print the whole model
+    neuralmind induce   learn rules from examples
     neuralmind demo     run one of the roadmap phases end to end
     neuralmind eval     benchmark the pipeline and attribute its failures
     neuralmind verify   re-derive the model with clingo and compare
@@ -190,6 +191,84 @@ def cmd_eval(args) -> int:
     return 0
 
 
+def cmd_induce(args) -> int:
+    from .core.terms import Const
+    from .induction import Examples, LanguageBias, RuleLearner
+
+    kb = _build_kb(args.rules, args.fact, args.facts_file)
+    _read_text(args, kb)
+
+    positives = list(args.positive)
+    if args.positives_file:
+        positives += _atoms_from_file(args.positives_file)
+    if not positives:
+        print("error: at least one --positive example is required", file=sys.stderr)
+        return 2
+
+    negatives = list(args.negative)
+    if args.negatives_file:
+        negatives += _atoms_from_file(args.negatives_file)
+
+    bias = LanguageBias.for_target(
+        args.target,
+        args.body,
+        max_variables=args.max_vars,
+        max_body=args.max_body,
+        max_clauses=args.max_clauses,
+        allow_recursion=not args.no_recursion,
+        allow_negation=args.negation,
+    )
+
+    if args.closed_world and not negatives:
+        # Everything over the constants seen in the background is a negative,
+        # unless it was given as a positive.
+        constants = sorted(
+            {
+                str(argument.value)
+                for record in kb.facts
+                for argument in record.atom.args
+                if isinstance(argument, Const) and not argument.is_number
+            }
+        )
+        examples = Examples.closed_world(positives, constants, bias.target)
+    else:
+        examples = Examples.from_strings(positives, negatives)
+
+    if not args.json:
+        print(bias.describe())
+        print(f"examples: {examples.summary()}\n")
+
+    hypothesis = RuleLearner(kb, bias, examples, budget=args.budget).learn(
+        verbose=not args.json
+    )
+    if args.json:
+        from .output.serialize import to_json
+
+        print(to_json(hypothesis.to_dict()))
+    else:
+        print()
+        print(hypothesis.describe())
+        if args.closed_world and not hypothesis.complete:
+            print()
+            print(
+                "hint: --closed-world made every unlisted atom a negative example. "
+                "If the positives you gave are not the complete relation, the "
+                "correct rule will derive an unlisted one and be rejected for it. "
+                "List every positive, or supply negatives explicitly."
+            )
+    return 0 if hypothesis.correct else 1
+
+
+def _atoms_from_file(path: Path) -> list[str]:
+    """One atom per line; blank lines and % comments ignored."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [
+        line.strip().rstrip(".")
+        for line in lines
+        if line.strip() and not line.lstrip().startswith("%")
+    ]
+
+
 def cmd_demo(args) -> int:
     from . import demos
 
@@ -246,8 +325,36 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--json", action="store_true")
     evaluate_parser.set_defaults(func=cmd_eval)
 
+    induce = sub.add_parser("induce", help="learn rules from examples")
+    _add_kb_arguments(induce)
+    induce.add_argument("--target", required=True, metavar="PRED/ARITY",
+                        help="the predicate to learn, e.g. 'grandparent/2'")
+    induce.add_argument("--body", action="append", default=[], metavar="PRED/ARITY",
+                        help="a predicate usable in rule bodies (repeatable)")
+    induce.add_argument("--positive", action="append", default=[], metavar="ATOM",
+                        help="a positive example (repeatable)")
+    induce.add_argument("--negative", action="append", default=[], metavar="ATOM",
+                        help="a negative example (repeatable)")
+    induce.add_argument("--positives-file", type=Path, help="one positive atom per line")
+    induce.add_argument("--negatives-file", type=Path, help="one negative atom per line")
+    induce.add_argument("--closed-world", action="store_true",
+                        help="treat everything not given as positive as negative")
+    induce.add_argument("--max-body", type=int, default=3)
+    induce.add_argument("--max-vars", type=int, default=4)
+    induce.add_argument("--max-clauses", type=int, default=4)
+    induce.add_argument("--no-recursion", action="store_true",
+                        help="forbid the target in rule bodies, shrinking the search")
+    induce.add_argument("--negation", action="store_true",
+                        help="allow negated body literals, for learning exceptions")
+    induce.add_argument("--budget", type=int, default=200_000,
+                        help="maximum candidate clauses to test")
+    induce.add_argument("--json", action="store_true")
+    induce.set_defaults(func=cmd_induce)
+
     demo = sub.add_parser("demo", help="run a roadmap phase end to end")
-    demo.add_argument("name", help="one of: family, text, mnist, repair, policy, learn")
+    demo.add_argument(
+        "name", help="one of: family, text, mnist, repair, policy, learn, induce"
+    )
     demo.add_argument("--json", action="store_true")
     demo.set_defaults(func=cmd_demo)
     return parser

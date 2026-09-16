@@ -21,6 +21,7 @@ __all__ = [
     "demo_repair",
     "demo_policy",
     "demo_learn",
+    "demo_induce",
 ]
 
 RULE = "-" * 72
@@ -299,6 +300,130 @@ def demo_policy(json_output: bool = False) -> int:
     return 0
 
 
+def demo_induce(json_output: bool = False) -> int:
+    """Beyond the roadmap: learn the rules themselves from examples."""
+    _heading("Learning rules from examples", "the other half of the bottleneck")
+    from .core.terms import Atom, Const
+    from .induction import Examples, LanguageBias, RuleLearner
+
+    edges = [
+        ("maria", "juho"), ("maria", "liisa"), ("juho", "aino"),
+        ("liisa", "onni"), ("aino", "elias"),
+    ]
+    people = ["maria", "juho", "liisa", "aino", "onni", "elias"]
+    family = KnowledgeBase("family")
+    family.add_facts([f"parent({a}, {b})" for a, b in edges])
+
+    print("background knowledge: " + ", ".join(f"parent({a},{b})" for a, b in edges))
+    print()
+
+    # 1. A non-recursive relation.
+    grandparents = [
+        f"grandparent({a}, {c})"
+        for a, b in edges
+        for c in [d for e, d in edges if e == b]
+    ]
+    print("1. given only these examples of grandparent:")
+    print("   " + ", ".join(grandparents))
+    examples = Examples.closed_world(grandparents, people)
+    bias = LanguageBias.for_target(
+        "grandparent/2", ["parent/2"], allow_recursion=False, max_variables=3, max_body=2
+    )
+    hypothesis = RuleLearner(family, bias, examples).learn()
+    print(f"   ({examples.summary()}, {hypothesis.candidates_evaluated} candidates tested)")
+    for rule in hypothesis.rules:
+        print(f"   -> {rule}")
+    print()
+
+    # 2. A recursive one, which has to bootstrap off its own base case.
+    closure = set(edges)
+    changed = True
+    while changed:
+        changed = False
+        for a, b in list(closure):
+            for c, d in edges:
+                if b == c and (a, d) not in closure:
+                    closure.add((a, d))
+                    changed = True
+    print("2. given examples of ancestor (transitive, so recursion is required):")
+    examples = Examples.closed_world(
+        [f"ancestor({a}, {b})" for a, b in sorted(closure)], people
+    )
+    bias = LanguageBias.for_target(
+        "ancestor/2", ["parent/2"], max_variables=3, max_body=2, max_clauses=3
+    )
+    learner = RuleLearner(family, bias, examples)
+    hypothesis = learner.learn()
+    print(f"   ({examples.summary()}, {hypothesis.candidates_evaluated} candidates tested)")
+    for rule in hypothesis.rules:
+        print(f"   -> {rule}")
+    print()
+    print("   the base case was found first, which is what lets the recursive")
+    print("   clause fire at all. A learned rule is an ordinary rule, so it")
+    print("   proves its conclusions like any other:")
+    print()
+    print(render_proof(learner.explain(hypothesis, "ancestor(maria, elias)")))
+    print()
+
+    # 3. Where it gets interesting: the rule depends on what the data exercises.
+    print("3. the same method on an access policy, learned from decision logs.")
+    print("   ILP returns the simplest rule consistent with the data, which is")
+    print("   not always the rule you had in mind:")
+    print()
+    for extra, label in (
+        ([], "with the original staff"),
+        (
+            ["employee(pia)", "has_role(pia, analyst)", "clearance(pia, public)"],
+            "after adding one person whose clearance actually matters",
+        ),
+    ):
+        policy = KnowledgeBase("acl").load_builtin("access_policy")
+        policy.add_facts(
+            [
+                "employee(dana)", "employee(erik)", "employee(sofia)", "employee(tom)",
+                "has_role(dana, analyst)", "has_role(erik, engineer)",
+                "has_role(sofia, lead_analyst)", "has_role(tom, analyst)",
+                "senior_to(lead_analyst, analyst)",
+                "grants(analyst, read, internal)", "grants(lead_analyst, read, confidential)",
+                "grants(engineer, write, internal)",
+                "resource(wiki)", "classification(wiki, internal)",
+                "resource(ledger)", "classification(ledger, confidential)",
+                "clearance(dana, internal)", "clearance(erik, restricted)",
+                "clearance(sofia, confidential)", "clearance(tom, internal)",
+                "requires_training(confidential, gdpr)", "completed_training(sofia, gdpr)",
+                "suspended(tom)",
+            ]
+            + extra
+        )
+        staff = [str(a.args[0]) for a in policy.engine().model.by_predicate("employee")]
+        decisions = [str(a) for a in policy.engine().model.by_predicate("may_access")]
+        negatives = [
+            atom
+            for person in staff
+            for action in ("read", "write")
+            for resource in ("wiki", "ledger")
+            if str(atom := Atom("may_access", (Const(person), Const(action), Const(resource))))
+            not in decisions
+        ]
+        examples = Examples.from_strings(decisions)
+        examples.negative = negatives
+        bias = LanguageBias.for_target(
+            "may_access/3",
+            ["permitted_by_role/3", "cleared/2", "blocked/2"],
+            max_variables=3, max_body=3, allow_negation=True, allow_recursion=False,
+        )
+        hypothesis = RuleLearner(policy, bias, examples).learn()
+        print(f"   {label} ({examples.summary()}):")
+        for rule in hypothesis.rules:
+            print(f"     -> {rule}")
+    print()
+    print("   The first rule is complete and consistent with every decision it")
+    print("   was shown -- it is simply wrong about a case nobody exercised.")
+    print("   That is the honest caveat of learning rules from data, and the")
+    print("   reason a learned rule is a proposal for review, not a policy.")
+    return 0
+
+
 REGISTRY: dict[str, Callable[..., int]] = {
     "family": demo_family,
     "text": demo_text,
@@ -306,4 +431,5 @@ REGISTRY: dict[str, Callable[..., int]] = {
     "repair": demo_repair,
     "policy": demo_policy,
     "learn": demo_learn,
+    "induce": demo_induce,
 }

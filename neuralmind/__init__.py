@@ -16,6 +16,18 @@ Quick start::
     )
     print(result.proof)
 
+Learn the rules instead of writing them::
+
+    from neuralmind import KnowledgeBase, learn_rules
+
+    kb = KnowledgeBase().add_facts(["parent(a, b)", "parent(b, c)"])
+    hypothesis = learn_rules(
+        kb, "grandparent/2",
+        positive=["grandparent(a, c)"], negative=["grandparent(c, a)"],
+        body_predicates=["parent/2"], allow_recursion=False,
+    )
+    print(hypothesis)   # grandparent(A, B) :- parent(A, C), parent(C, B).
+
 Or purely symbolically::
 
     from neuralmind import KnowledgeBase
@@ -34,6 +46,7 @@ from .consistency.layer import ConsistencyLayer, ConsistencyReport
 from .core.parser import parse_atom, parse_file, parse_program
 from .core.program import Program, Rule
 from .core.terms import Atom, Const, Literal, Var
+from .induction import Examples, Hypothesis, LanguageBias, RuleLearner, learn_rules
 from .inference.engine import Answer, ReasoningEngine
 from .inference.model import Model
 from .inference.proof import ProofNode, explain
@@ -81,6 +94,12 @@ __all__ = [
     "parse_atom",
     "parse_program",
     "parse_file",
+    # induction (pure Python, no NumPy needed)
+    "RuleLearner",
+    "LanguageBias",
+    "Examples",
+    "Hypothesis",
+    "learn_rules",
     # consistency
     "ConsistencyLayer",
     "ConsistencyReport",

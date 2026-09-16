@@ -138,6 +138,40 @@ at any point. The gradient of P(sum = s) through
 `sum(S) :- digit(d0, A), digit(d1, B), S = A + B.` is the entire training
 signal, and it is enough.
 
+## 7. Induction (`neuralmind/induction/`)
+
+Layer 6 learns perception from the rules. This one learns the rules.
+
+The loop is generate-test-constrain. **Generate**: enumerate clauses inside a
+declared :class:`LanguageBias`, shortest first, so the simplest working rule is
+the one found. **Test**: run the actual inference engine on background knowledge
+plus the candidate -- the same engine that will run the rule in production, so a
+hypothesis cannot pass here and behave differently later. **Constrain**: a body
+covering no positive example cannot start covering one when literals are added,
+because a conjunction only narrows; every superset of it is pruned unseen.
+
+Three filters cut the space before anything is tested: variable safety (the
+engine's own check), connectivity (a body literal sharing no variable with the
+rest constrains nothing), and canonical renaming (`q(A,C),r(C,B)` and
+`q(A,D),r(D,B)` are one clause, not two).
+
+Multi-clause definitions come from sequential covering: learn a clause, set
+aside what it explains, repeat -- with the already-learned clauses left in the
+program while later candidates are tested. That is what lets recursion
+bootstrap. `ancestor`'s base case is found first because it covers the most,
+and the recursive clause can then fire on top of it.
+
+**Two honesty mechanisms**, both added after the implementation misled its own
+author:
+
+* If the background already entails a positive example, the hypothesis is
+  credited with coverage it did not earn. `strip_target=True` removes the
+  target's existing definition by default, and `Hypothesis.leaked` reports it
+  loudly when that is switched off.
+* `Examples.closed_world` turns every unlisted atom into a negative. With an
+  incomplete positive list the correct rule derives an unlisted one and is
+  rejected for it. The CLI says so when a closed-world run finds nothing.
+
 ## Design decisions worth knowing
 
 **Why a hand-written engine when clingo exists.** Proof trees. clingo gives
@@ -151,6 +185,12 @@ is the difference between a clear message and a wrong answer nobody notices.
 **Why perception never concludes anything.** Every conclusion comes from a rule,
 so every conclusion has a proof. The moment perception is allowed to infer, the
 proof tree stops being complete.
+
+**Why the inference engine tests ILP candidates, rather than a fast
+approximation.** A specialised coverage checker would be several times quicker.
+It would also be a second implementation of entailment, and the moment the two
+disagreed the learner would be confidently producing rules that do not work.
+The search is fast enough as it is -- `ancestor` takes 43 candidate tests.
 
 **Why the truth tensor rather than circuit compilation.** Compiling to an SDD is
 the scalable answer and the reason DeepProbLog can handle larger programs. A

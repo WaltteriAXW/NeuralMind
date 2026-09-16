@@ -86,6 +86,7 @@ neuralmind demo mnist    # Phase 1: a CNN reads two digits, the logic adds them
 neuralmind demo repair   # Phase 4: hard rules correct a misread digit
 neuralmind demo policy   # Phase 6: an auditable access-control decision
 neuralmind demo learn    # beyond the roadmap: learn digits from sums alone
+neuralmind demo induce   # beyond the roadmap: learn the rules from examples
 neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 ```
 
@@ -101,6 +102,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | 6 | Ship something narrow but real | access-policy checker with audit evidence |
 | 7 | Say what fraction of failures are perception vs reasoning | **1200/1200** to proof depth 4; attribution built in |
 | — | *beyond the roadmap:* learn perception through the rules | **98.20%** digit accuracy from **zero** digit labels |
+| — | *beyond the roadmap:* learn the rules from examples | recovers `grandparent`, recursive `ancestor`, and negated exceptions |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
@@ -166,6 +168,56 @@ This answers the obvious objection to a Type 3 pipeline — that the two halves
 must be trained separately, so the perception layer needs its own labelled data.
 It does not.
 
+## Learning the rules
+
+The knowledge acquisition bottleneck — the thing the source report names as the
+central cost of this whole approach — has two halves. Perception needs labels;
+rules need an expert. The section above removed the first. `induction/` removes
+the second.
+
+Given examples of a relation, the learner searches for the rule that defines it.
+The method is generate-test-constrain: enumerate clauses shortest-first inside a
+declared bias, let **the real inference engine** decide which examples each one
+covers, and prune every extension of a body that covered nothing — a conjunction
+only ever narrows, so that pruning is what makes the search finish.
+
+```console
+$ neuralmind induce --target ancestor/2 --body parent/2 --closed-world     -f "parent(maria,juho)" -f "parent(juho,aino)" ... --positive ...
+
+  + ancestor(A, B) :- parent(A, B).                     (+5 examples)
+  + ancestor(A, B) :- parent(C, B), ancestor(A, C).     (+4 examples)
+
+covers 9/9 positive and 0/27 negative examples
+verdict: complete and consistent
+43 candidate clause(s) tested in 0.02s
+```
+
+It finds the base case first, which is the only reason the recursive clause can
+fire at all. Exceptions work too, when negation is allowed:
+`flies(A) :- bird(A), not penguin(A).` from five birds, in five candidate tests.
+
+A learned rule is an ordinary rule. It proves its conclusions, gets checked
+against integrity constraints, and cross-checks against clingo, exactly like a
+hand-written one.
+
+### The caveat, demonstrated rather than disclaimed
+
+ILP returns the *simplest* rule consistent with the data, which is not always the
+rule you meant. Learning an access policy from decision logs:
+
+```
+with the original staff (4 positive, 12 negative):
+  -> may_access(A,B,C) :- permitted_by_role(A,B,C), not blocked(A,C).
+
+after adding one person whose clearance actually matters (4 positive, 16 negative):
+  -> may_access(A,B,C) :- permitted_by_role(A,B,C), cleared(A,C), not blocked(A,C).
+```
+
+The first rule is complete and consistent with every decision it was shown. It
+is simply wrong about a case nobody exercised — the clearance check never
+mattered in that data, so it was never learned. `neuralmind demo induce` runs
+both. A learned rule is a proposal for review, not a policy.
+
 **Read the Phase 3/7 numbers honestly.** They are measured on generated
 controlled-English problems in the ProofWriter register, not on the real
 ProofWriter dataset, and the perception layer covers that register by
@@ -185,6 +237,7 @@ them, which is the honest failure mode but still a failure.
 | Consistency | `consistency/` | The Type 5 layer: the same rules evaluated in fuzzy logic over perception confidences, plus repair by exact weighted model counting. |
 | Output | `output/` | JSON, ASCII proof trees, and a deterministic template realiser. |
 | Learning | `learning/` | Runs the rules backward: exact weighted model counting over a truth tensor the engine fills, so a logical consequence becomes a training signal. |
+| Induction | `induction/` | Learns the rules themselves by generate-test-constrain search, with the inference engine judging every candidate. |
 
 ### The parts worth a closer look
 
@@ -257,8 +310,10 @@ strengths:
   English. spaCy widens it; neither handles ambiguity, ellipsis, or anything
   needing world knowledge. This is where the "knowledge acquisition bottleneck"
   actually bites.
-- **Writing the rules.** Phase 2 is the work. The system applies rules
-  faultlessly and invents none.
+- **Writing the rules.** Phase 2 is still where the work is. `induction/` learns
+  a rule when you can supply examples of the relation *and* a bias tight enough
+  to search — which is a real help, not a replacement for knowing the domain.
+  It learns definitions, not ontologies.
 - **Scale.** Symbolic search is combinatorial. `clingo` is heavily optimised and
   the guard rails turn runaway recursion into an error, but a large enough
   problem is still a large problem.

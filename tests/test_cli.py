@@ -93,3 +93,87 @@ def test_unknown_demo_is_reported(capsys):
 def test_bad_rule_file_gives_a_clean_error(capsys):
     code, _, err = run(capsys, "ask", "-r", "p(X) :- q(Y).", "p(a)")
     assert code == 2 and "error:" in err
+
+
+FAMILY_FACTS = [
+    "parent(maria,juho)", "parent(maria,liisa)", "parent(juho,aino)",
+    "parent(liisa,onni)", "parent(aino,elias)",
+]
+
+
+def _fact_args():
+    return [arg for fact in FAMILY_FACTS for arg in ("-f", fact)]
+
+
+def test_induce_learns_a_rule(capsys):
+    code, out, _ = run(
+        capsys, "induce", "--target", "grandparent/2", "--body", "parent/2",
+        "--no-recursion", "--max-vars", "3", "--max-body", "2", "--closed-world",
+        *_fact_args(),
+        "--positive", "grandparent(maria,aino)",
+        "--positive", "grandparent(maria,onni)",
+        "--positive", "grandparent(juho,elias)",
+    )
+    assert code == 0
+    assert "grandparent(A, B) :- parent(A, C), parent(C, B)." in out
+    assert "complete and consistent" in out
+
+
+def test_induce_emits_json(capsys):
+    code, out, _ = run(
+        capsys, "induce", "--json", "--target", "grandparent/2", "--body", "parent/2",
+        "--no-recursion", "--max-vars", "3", "--max-body", "2", "--closed-world",
+        *_fact_args(),
+        "--positive", "grandparent(maria,aino)",
+        "--positive", "grandparent(maria,onni)",
+        "--positive", "grandparent(juho,elias)",
+    )
+    document = json.loads(out)
+    assert document["rules"] and document["consistent"] is True
+
+
+def test_induce_requires_an_example(capsys):
+    code, _, err = run(capsys, "induce", "--target", "p/1", "--body", "q/1")
+    assert code == 2 and "at least one --positive" in err
+
+
+def test_incomplete_positives_under_closed_world_get_a_hint(capsys):
+    """The classic trap: one positive listed, the rest silently become negatives."""
+    code, out, _ = run(
+        capsys, "induce", "--target", "grandparent/2", "--body", "parent/2",
+        "--no-recursion", "--max-vars", "3", "--max-body", "2", "--closed-world",
+        *_fact_args(), "--positive", "grandparent(maria,aino)",
+    )
+    assert code == 1
+    assert "no rule found" in out and "--closed-world made every unlisted atom" in out
+
+
+def test_induce_reports_failure_with_a_nonzero_exit(capsys):
+    code, out, _ = run(
+        capsys, "induce", "--target", "mystery/2", "--body", "parent/2",
+        "--no-recursion", "--max-vars", "2", "--max-body", "1",
+        *_fact_args(),
+        "--positive", "mystery(maria,elias)", "--negative", "mystery(elias,maria)",
+    )
+    assert code == 1 and "no rule found" in out
+
+
+def test_induce_reads_examples_from_a_file(capsys, tmp_path):
+    path = tmp_path / "positives.lp"
+    path.write_text(
+        "% grandparents\n"
+        "grandparent(maria,aino).\n"
+        "grandparent(maria,onni).\n"
+        "grandparent(juho,elias).\n\n"
+    )
+    code, out, _ = run(
+        capsys, "induce", "--target", "grandparent/2", "--body", "parent/2",
+        "--no-recursion", "--max-vars", "3", "--max-body", "2", "--closed-world",
+        *_fact_args(), "--positives-file", str(path),
+    )
+    assert code == 0 and "parent(A, C), parent(C, B)" in out
+
+
+def test_demo_induce_runs(capsys):
+    code, out, _ = run(capsys, "demo", "induce")
+    assert code == 0 and "Learning rules from examples" in out

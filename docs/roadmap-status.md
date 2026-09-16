@@ -80,10 +80,31 @@ It matters because it answers the obvious objection to a Type 3 pipeline -- that
 the neural and symbolic halves must be trained separately, and that the
 perception layer therefore needs its own labelled data. It does not.
 
+## Beyond the roadmap: learning the rules
+
+The source report names the knowledge acquisition bottleneck as the central
+practical cost of this architecture, and points at ILP (Popper) as the
+mitigation. `neuralmind/induction/` implements generate-test-constrain search
+over a bounded hypothesis space, with the inference engine judging candidates.
+
+Measured on the classic targets: `grandparent` in 12 candidate tests, recursive
+`ancestor` (two clauses, found in the right order) in 43, and the negated
+exception `flies(A) :- bird(A), not penguin(A).` in 5.
+
+Together with the weak-supervision layer this closes both halves of the
+bottleneck as far as they can be closed: perception no longer needs labels, and
+rules no longer need to be written by hand *when examples of the relation exist
+and the bias can be stated*. Neither condition is free, and neither replaces
+knowing the domain.
+
 ## What is genuinely not built
 - **Vision beyond digits.** No Detectron2 or SAM integration. The perceptor
   interface takes any model with `predict_proba`, so the work is wiring, not
   architecture.
+- **Ontology learning.** `induction/` learns a definition of one predicate from
+  examples of it. It does not invent predicates, propose a type hierarchy, or
+  decide what the domain's concepts should be. That is still the expert's job,
+  and it is the larger part of Phase 2.
 - **Large-scale knowledge.** No Wikidata or ConceptNet import. `knowledge/rdf.py`
   is the bridge, but nothing is loaded through it at scale, and the forward
   chainer is not a Datalog engine for millions of facts — that is what Soufflé
