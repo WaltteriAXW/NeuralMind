@@ -413,7 +413,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo = sub.add_parser("demo", help="run a roadmap phase end to end")
     demo.add_argument(
-        "name", help="one of: family, text, mnist, repair, policy, learn, induce"
+        "name",
+        help="one of: family, text, mnist, repair, policy, learn, induce, correct",
     )
     demo.add_argument("--json", action="store_true")
     demo.set_defaults(func=cmd_demo)

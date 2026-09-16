@@ -18,13 +18,14 @@ import itertools
 from typing import Iterator, Optional, Sequence
 
 from ..core.program import Rule, SafetyError
-from ..core.terms import Atom, Literal, Var
+from ..core.terms import Atom, Compare, Literal, Var, variables_in
 from .bias import LanguageBias, Signature
 
 __all__ = [
     "variable_pool",
     "head_atom",
     "candidate_literals",
+    "candidate_comparisons",
     "candidate_bodies",
     "canonical_key",
     "is_connected",
@@ -45,6 +46,23 @@ def variable_pool(count: int) -> tuple[Var, ...]:
 def head_atom(bias: LanguageBias) -> Atom:
     """The head shared by every candidate: ``target(A, B, ...)``."""
     return Atom(bias.target.name, variable_pool(bias.target.arity))
+
+
+def candidate_comparisons(bias: LanguageBias) -> list[Compare]:
+    """``X != Y`` for each unordered pair of variables the bias allows.
+
+    Only disequality: it is what relational definitions need (a sibling is a
+    child of the same parent who is not the same person), and ordering
+    comparisons rarely apply to the symbolic constants these rules range over.
+    """
+    if not bias.allow_comparison:
+        return []
+    pool = variable_pool(bias.max_variables)
+    return [
+        Compare("!=", left, right)
+        for index, left in enumerate(pool)
+        for right in pool[index + 1 :]
+    ]
 
 
 def candidate_literals(bias: LanguageBias) -> list[Literal]:
@@ -83,11 +101,11 @@ def is_connected(head: Atom, body: Sequence[Literal]) -> bool:
     progress = True
     while progress and remaining:
         progress = False
-        for literal in list(remaining):
-            variables = {a.name for a in literal.atom.args if isinstance(a, Var)}
+        for part in list(remaining):
+            variables = set(variables_in(part))
             if variables & reached or not variables:
                 reached |= variables
-                remaining.remove(literal)
+                remaining.remove(part)
                 progress = True
     return not remaining
 
@@ -100,6 +118,13 @@ def canonical_key(head: Atom, body: Sequence[Literal]) -> tuple:
     not care about order.
     """
     mapping: dict[str, str] = {}
+
+    def rename_term(term) -> str:
+        if isinstance(term, Var):
+            if term.name not in mapping:
+                mapping[term.name] = f"V{len(mapping)}"
+            return mapping[term.name]
+        return str(term)
 
     def rename(atom: Atom) -> str:
         parts = []
@@ -114,9 +139,15 @@ def canonical_key(head: Atom, body: Sequence[Literal]) -> tuple:
 
     head_key = rename(head)
     body_keys = []
-    for literal in body:
-        text = rename(literal.atom)
-        body_keys.append(f"not {text}" if literal.negated else text)
+    for part in body:
+        if isinstance(part, Compare):
+            left, right = rename_term(part.left), rename_term(part.right)
+            # "!=" is symmetric, so order must not make two keys of one clause.
+            ends = sorted([left, right]) if part.op == "!=" else [left, right]
+            body_keys.append(f"{ends[0]} {part.op} {ends[1]}")
+            continue
+        text = rename(part.atom)
+        body_keys.append(f"not {text}" if part.negated else text)
     return (head_key, frozenset(body_keys))
 
 
@@ -140,7 +171,10 @@ def candidate_bodies(
     Each item is ``(rule, body, canonical key)``. Duplicates under variable
     renaming are emitted once.
     """
-    pool = list(literals) if literals is not None else candidate_literals(bias)
+    if literals is not None:
+        pool = list(literals)
+    else:
+        pool = candidate_literals(bias) + candidate_comparisons(bias)
     head = head_atom(bias)
     seen: set[tuple] = set()
     for body in itertools.combinations(pool, size):

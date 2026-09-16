@@ -62,8 +62,14 @@ HELP = """
   :load <name|path>      add a bundled rule set (or a .lp file)
   :sets                  list the bundled rule sets
   :retract <atom>        remove an asserted fact
-  :learn <target/arity> from <pred/arity> ...
+  :learn <target/arity> [from <pred/arity> ...]
                          induce a rule for the target from what is known
+  :expect <atom>         this should follow but does not -- propose fixes
+  :wrong <atom>          this follows but should not -- propose fixes
+  :accept <n>            apply one of the proposed fixes
+  :undo                  undo the last change
+  :history               everything asserted this session
+  :open <path>           replace the session with a saved knowledge base
   :schema [direct|triple]  how English maps onto predicates
   :proof on|off          show derivations with answers
   :prose on|off          add an English rendering of the answer
@@ -94,6 +100,9 @@ class Shell:
     _engine: object = None
     _realiser: Realiser = field(default_factory=Realiser)
     _reported_violations: set = field(default_factory=set)
+    _undo: list = field(default_factory=list)
+    _repairs: list = field(default_factory=list)
+    _undo_limit: int = 50
 
     # -- lazily built parts -------------------------------------------------
 
@@ -114,6 +123,19 @@ class Shell:
 
     def _invalidate(self) -> None:
         self._engine = None
+
+    def _snapshot(self, label: str) -> None:
+        """Remember the knowledge base so :undo can put it back."""
+        self._undo.append(
+            (label, list(self.knowledge.rules.rules), list(self.knowledge.facts))
+        )
+        del self._undo[: -self._undo_limit]
+
+    def _restore(self, rules, facts) -> None:
+        self.knowledge.rules.rules = list(rules)
+        self.knowledge._facts = {record.atom: record for record in facts}
+        self._reported_violations.clear()
+        self._invalidate()
 
     def _reversible(self):
         """Context manager that can undo an assertion that breaks the session.
@@ -174,6 +196,7 @@ class Shell:
             return None
         if not program.rules:
             return None
+        self._snapshot(text)
         with self._reversible() as undo:
             added = []
             for rule in program.rules:
@@ -194,6 +217,7 @@ class Shell:
         perception = self.perceptor.perceive(text)
         if not perception.facts and not perception.rules:
             return None
+        self._snapshot(text)
         with self._reversible() as undo:
             perception.into(self.knowledge)
             self._invalidate()
@@ -439,13 +463,14 @@ class Shell:
 
     def cmd_learn(self, argument: str) -> str:
         """Induce a rule for a predicate from what the session already knows."""
-        match = re.match(r"^(\S+)\s+from\s+(.+)$", argument)
+        match = re.match(r"^(\S+)(?:\s+from\s+(.+))?$", argument.strip())
         if not match:
             return (
-                "? usage: :learn <target/arity> from <pred/arity> [<pred/arity> ...]\n"
-                "  e.g. ':learn grandparent/2 from parent/2'"
+                "? usage: :learn <target/arity> [from <pred/arity> ...]\n"
+                "  e.g. ':learn grandparent/2' or ':learn grandparent/2 from parent/2'"
             )
-        target, sources = match.group(1), match.group(2).split()
+        target = match.group(1)
+        sources = match.group(2).split() if match.group(2) else None
         from .induction import Examples, LanguageBias, RuleLearner, Signature
 
         try:
@@ -472,14 +497,27 @@ class Shell:
         )
         try:
             examples = Examples.closed_world(positives, universe, signature)
-            bias = LanguageBias.for_target(
-                target, sources, max_variables=max(3, signature.arity + 1), max_body=2
+            options = dict(
+                max_variables=max(3, signature.arity + 2),
+                max_body=3,
+                allow_comparison=True,
+                allow_recursion=False,
+            )
+            # With no "from" clause, take the vocabulary from the session
+            # itself -- the caller should not have to know which predicates
+            # are relevant before asking.
+            bias = (
+                LanguageBias.for_target(target, sources, **options)
+                if sources is not None
+                else LanguageBias.from_knowledge(self.knowledge, signature, **options)
             )
             hypothesis = RuleLearner(self.knowledge, bias, examples).learn()
         except (ValueError, ProgramError) as exc:
             return f"? {exc}"
         if not hypothesis.rules:
             return _indent(hypothesis.describe())
+        if hypothesis.underdetermined:
+            pass  # reported below, after the rules
         for rule in hypothesis.rules:
             self.knowledge.rules.add(rule)
             self.transcript.append(str(rule))
@@ -488,9 +526,120 @@ class Shell:
         lines.append(
             f"  ({examples.summary()}, {hypothesis.candidates_evaluated} candidates tested)"
         )
+        if hypothesis.underdetermined:
+            lines.append(
+                "  ! the examples do not single out one rule; these fit as well:"
+            )
+            for alternatives in hypothesis.ties.values():
+                lines.extend(f"      {rule}" for rule in alternatives)
         if not hypothesis.correct:
-            lines.append("  ! " + hypothesis.describe().splitlines()[-2])
+            lines.append(f"  ! {hypothesis.incomplete_reason or 'not fully correct'}")
         return "\n".join(lines)
+
+    def cmd_undo(self, argument: str) -> str:
+        if not self._undo:
+            return "  nothing to undo"
+        label, rules, facts = self._undo.pop()
+        self._restore(rules, facts)
+        if self.transcript:
+            self.transcript.pop()
+        return f"  undid: {label}"
+
+    def cmd_history(self, argument: str) -> str:
+        if not self.transcript:
+            return "  (nothing yet)"
+        return "\n".join(f"  {line}" for line in self.transcript)
+
+    def cmd_open(self, argument: str) -> str:
+        """Replace the session with a saved knowledge base."""
+        if not argument:
+            return "? :open needs a path"
+        path = Path(argument)
+        if not path.exists():
+            return f"? no such file: {path}"
+        self._snapshot(f":open {path}")
+        fresh = KnowledgeBase("session")
+        try:
+            fresh.load_rules(path)
+            fresh.program()
+        except (ProgramError, ParseError, OSError) as exc:
+            self._undo.pop()
+            return f"? {path} would not load: {exc}"
+        self.knowledge = fresh
+        self._reported_violations.clear()
+        self._invalidate()
+        return (
+            f"  opened {path}: {len(self.knowledge)} fact(s), "
+            f"{len(self.knowledge.rules.derivation_rules)} rule(s)"
+        )
+
+    def cmd_expect(self, argument: str) -> str:
+        """Complain that something should follow and does not."""
+        return self._correct(expected=argument, label="should hold")
+
+    def cmd_wrong(self, argument: str) -> str:
+        """Complain that something follows and should not."""
+        return self._correct(rejected=argument, label="should not hold")
+
+    def _correct(self, expected: str = "", rejected: str = "", label: str = "") -> str:
+        argument = expected or rejected
+        if not argument:
+            return "? give an atom, e.g. ':wrong flies(pingu)'"
+        try:
+            atom = parse_atom(argument.rstrip("."))
+        except (ParseError, ValueError) as exc:
+            return f"? {exc}"
+        from .induction.repair import Corrector
+
+        try:
+            repairs = Corrector(self.knowledge).diagnose(
+                expected=[atom] if expected else (),
+                rejected=[atom] if rejected else (),
+            )
+        except ProgramError as exc:
+            return f"! {exc}"
+        if not repairs:
+            holds = atom in self.engine.solve()
+            if expected and holds:
+                return f"  {atom} already follows -- nothing to fix"
+            if rejected and not holds:
+                return f"  {atom} does not follow -- nothing to fix"
+            return "  I could not find any change that would help"
+        self._repairs = repairs
+        lines = [f"  {atom} {label}. Possible changes:"]
+        for index, repair in enumerate(repairs, 1):
+            lines.append(f"  [{index}] " + repair.describe().replace("\n", "\n  "))
+        lines.append("  apply one with ':accept <n>'")
+        return "\n".join(lines)
+
+    def cmd_accept(self, argument: str) -> str:
+        if not self._repairs:
+            return "? nothing proposed -- use :expect or :wrong first"
+        try:
+            index = int(argument) - 1
+        except ValueError:
+            return "? :accept needs a number from the list"
+        if not 0 <= index < len(self._repairs):
+            return f"? choose between 1 and {len(self._repairs)}"
+        repair = self._repairs[index]
+        self._snapshot(f":accept {index + 1}")
+        repair.apply(self.knowledge)
+        self._reported_violations.clear()
+        self._invalidate()
+        try:
+            self.knowledge.program()
+        except ProgramError as exc:
+            label, rules, facts = self._undo.pop()
+            self._restore(rules, facts)
+            return f"! rejected, that change would not compile:\n  {exc}"
+        for rule in repair.add:
+            self.transcript.append(str(rule))
+        for atom in repair.add_facts:
+            self.transcript.append(f"{atom}.")
+        self._repairs = []
+        return "  applied:\n" + "\n".join(
+            f"    {line}" for line in repair.describe().splitlines()[1:]
+        )
 
     # -- the loop -----------------------------------------------------------
 
@@ -587,6 +736,12 @@ _COMMANDS: dict[str, Callable[[Shell, str], str]] = {
     "proof": Shell.cmd_proof,
     "prose": Shell.cmd_prose,
     "learn": Shell.cmd_learn,
+    "undo": Shell.cmd_undo,
+    "history": Shell.cmd_history,
+    "open": Shell.cmd_open,
+    "expect": Shell.cmd_expect,
+    "wrong": Shell.cmd_wrong,
+    "accept": Shell.cmd_accept,
 }
 
 

@@ -189,7 +189,21 @@ program while later candidates are tested. That is what lets recursion
 bootstrap. `ancestor`'s base case is found first because it covers the most,
 and the recursive clause can then fire on top of it.
 
-**Two honesty mechanisms**, both added after the implementation misled its own
+**Repair** (`induction/repair.py`) runs the same machinery from the other end.
+Given "this should follow" or "this should not", it proposes changes: narrow the
+offending rule with one more condition, drop it, retract a fact, or learn a new
+rule. Each proposal is measured against the model before and after, so it
+carries what it fixes, what it breaks, and what it newly derives. Nothing is
+applied automatically — a change that repairs one case and silently breaks four
+is worse than none, and only showing both makes that decidable.
+
+Specialisation candidates are generated over *the rule's own variables*, not a
+fresh pool. That sounds like a detail and is not: a literal over unrelated
+variables leaves them unbound, so every such rule is unsafe and is discarded
+before it is tried. The first version did exactly that and proposed nothing but
+"delete the rule".
+
+**Three honesty mechanisms**, all added after the implementation misled its own
 author:
 
 * If the background already entails a positive example, the hypothesis is
@@ -199,6 +213,9 @@ author:
 * `Examples.closed_world` turns every unlisted atom into a negative. With an
   incomplete positive list the correct rule derives an unlisted one and is
   rejected for it. The CLI says so when a closed-world run finds nothing.
+* When several clauses cover exactly the same examples, choosing one is
+  arbitrary. `Hypothesis.underdetermined` reports the competing rules instead of
+  presenting the arbitrary pick as a conclusion.
 
 ## The session shell (`neuralmind/shell.py`)
 

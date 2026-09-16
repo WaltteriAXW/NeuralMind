@@ -198,7 +198,18 @@ def test_learn_needs_examples(shell):
 
 
 def test_learn_rejects_a_malformed_request(shell):
-    assert "usage:" in shell.handle(":learn grandparent")
+    assert "name/arity" in shell.handle(":learn grandparent")
+
+
+def test_learn_works_out_the_vocabulary_for_itself(shell):
+    """No 'from' clause: the session's own predicates are the search space."""
+    converse(
+        shell,
+        "parent(m, j).", "parent(m, l).", "parent(j, a).",
+        "sibling(j, l).", "sibling(l, j).",
+    )
+    response = shell.handle(":learn sibling/2")
+    assert "sibling(A, B) :- parent(C, A), parent(C, B), A != B." in response
 
 
 def test_unknown_commands_are_reported(shell):
@@ -262,3 +273,104 @@ def test_a_rejected_rule_leaves_no_trace(shell):
     shell.handle("p(X, Y) :- q(X).")
     assert "(no rules)" in shell.handle(":rules")
     assert "(no facts)" in shell.handle(":facts")
+
+
+# -- teaching by correction ------------------------------------------------
+
+
+@pytest.fixture
+def birds(shell):
+    converse(
+        shell,
+        "bird(tweety).", "bird(pingu).", "bird(eagle).", "penguin(pingu).",
+        "flies(X) :- bird(X).",
+    )
+    return shell
+
+
+def test_wrong_proposes_ranked_repairs(birds):
+    response = birds.handle(":wrong flies(pingu)")
+    assert "should not hold" in response
+    assert "not penguin(X)" in response
+    assert "[1]" in response and "accept" in response
+
+
+def test_accept_applies_the_chosen_repair(birds):
+    birds.handle(":wrong flies(pingu)")
+    assert "applied" in birds.handle(":accept 1")
+    assert birds.handle("flies(pingu)?").startswith("no")
+    assert birds.handle("flies(eagle)?").startswith("yes")
+
+
+def test_undo_reverses_an_accepted_repair(birds):
+    birds.handle(":wrong flies(pingu)")
+    birds.handle(":accept 1")
+    assert "undid" in birds.handle(":undo")
+    assert birds.handle("flies(pingu)?").startswith("yes")
+
+
+def test_accept_needs_a_proposal_first(shell):
+    assert "nothing proposed" in shell.handle(":accept 1")
+
+
+def test_accept_validates_its_argument(birds):
+    birds.handle(":wrong flies(pingu)")
+    assert "needs a number" in birds.handle(":accept x")
+    assert "choose between" in birds.handle(":accept 99")
+
+
+def test_expect_proposes_a_rule(shell):
+    converse(shell, "parent(m, j).", "parent(j, a).", "parent(m, l).", "parent(l, o).")
+    response = shell.handle(":expect grandparent(m, a)")
+    assert "grandparent(A, B) :- parent(A, C), parent(C, B)." in response
+
+
+def test_complaining_about_something_already_right_says_so(birds):
+    assert "nothing to fix" in birds.handle(":wrong flies(nobody)")
+    assert "nothing to fix" in birds.handle(":expect flies(tweety)")
+
+
+def test_correction_needs_an_atom(shell):
+    assert "give an atom" in shell.handle(":wrong")
+
+
+# -- persistence and history -----------------------------------------------
+
+
+def test_undo_reverses_an_assertion(shell):
+    shell.handle("Bob is a cat.")
+    assert "undid" in shell.handle(":undo")
+    assert "(no facts)" in shell.handle(":facts")
+
+
+def test_undo_on_an_empty_session(shell):
+    assert "nothing to undo" in shell.handle(":undo")
+
+
+def test_history_records_what_was_asserted(shell):
+    converse(shell, "Bob is a cat.", "parent(a, b).")
+    history = shell.handle(":history")
+    assert "Bob is a cat." in history and "parent(a, b)." in history
+
+
+def test_save_then_open_round_trips(shell, tmp_path):
+    converse(shell, "Bob is a cat.", "All cats are mammals.")
+    target = tmp_path / "kb.lp"
+    shell.handle(f":save {target}")
+    shell.handle(":clear")
+    assert "(no facts)" in shell.handle(":facts")
+    assert "opened" in shell.handle(f":open {target}")
+    assert shell.handle("Is Bob a mammal?").startswith("yes")
+
+
+def test_open_reports_a_missing_file(shell):
+    assert "no such file" in shell.handle(":open /nowhere/kb.lp")
+
+
+def test_open_refuses_a_file_that_would_not_compile(shell, tmp_path):
+    broken = tmp_path / "broken.lp"
+    broken.write_text("p(X, Y) :- q(X).\n")
+    converse(shell, "Bob is a cat.")
+    assert "would not load" in shell.handle(f":open {broken}")
+    # ...and the session is untouched.
+    assert "isa(bob, cat)" in shell.handle(":facts")

@@ -68,18 +68,20 @@ def _label(node: ProofNode) -> str:
 def render_model(model: Model, predicates: Optional[Iterable[str]] = None, limit: int = 200) -> str:
     """List the atoms of a model, grouped by predicate."""
     wanted = set(predicates) if predicates else None
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[tuple[str, int], list[str]] = {}
     for atom in model.atoms:
         if wanted and atom.predicate not in wanted:
             continue
-        grouped.setdefault(atom.predicate, []).append(str(atom))
+        grouped.setdefault(atom.signature, []).append(str(atom))
     if not grouped:
         return "(no atoms)"
     lines: list[str] = []
-    for predicate in sorted(grouped):
-        atoms = sorted(grouped[predicate])
+    for signature in sorted(grouped):
+        atoms = sorted(grouped[signature])
         shown = atoms[:limit]
-        lines.append(f"{predicate}/{len(atoms)}:")
+        # name/arity, then how many there are -- the count used to sit where
+        # every reader expects the arity.
+        lines.append(f"{signature[0]}/{signature[1]}  ({len(atoms)}):")
         lines.extend(f"  {a}" for a in shown)
         if len(atoms) > len(shown):
             lines.append(f"  ... and {len(atoms) - len(shown)} more")

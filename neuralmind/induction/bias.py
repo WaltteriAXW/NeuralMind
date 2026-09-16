@@ -86,7 +86,13 @@ class LanguageBias:
     max_clauses: int = 4
     allow_recursion: bool = True
     allow_negation: bool = False
+    #: Whether ``X != Y`` may appear in a body. Most relational definitions
+    #: need it -- a sibling is a child of the same parent who is *not the same
+    #: person* -- and without it they cannot be expressed at all.
+    allow_comparison: bool = False
     require_connected: bool = True
+    #: Predicates dropped by :meth:`from_knowledge` to keep the space finite.
+    omitted_predicates: tuple = ()
 
     def __post_init__(self) -> None:
         self.target = Signature.parse(self.target)
@@ -118,6 +124,50 @@ class LanguageBias:
             **kwargs,
         )
 
+    @classmethod
+    def from_knowledge(
+        cls,
+        knowledge,
+        target: Union[str, Signature],
+        exclude: Iterable[Union[str, Signature]] = (),
+        max_predicates: int = 12,
+        **kwargs,
+    ) -> "LanguageBias":
+        """Derive a bias from whatever a knowledge base already contains.
+
+        Everything the knowledge base mentions, apart from the target itself,
+        becomes usable in a body. This is what lets a caller say "learn
+        ``uncle/2``" without first working out which predicates are relevant --
+        the search space is bounded by the domain rather than by the user.
+
+        Wider is not free: the space grows as ``|literals| ** max_body``, so a
+        knowledge base with many predicates is capped at ``max_predicates``
+        (most frequent first) and the rest reported by
+        :attr:`omitted_predicates`. A caller who knows better should still say
+        so; this is a sensible default, not a substitute for knowing the domain.
+        """
+        signature = Signature.parse(target)
+        skip = {signature} | {Signature.parse(e) for e in exclude}
+        counts: dict[Signature, int] = {}
+        for record in getattr(knowledge, "facts", []):
+            found = Signature(record.atom.predicate, record.atom.arity)
+            counts[found] = counts.get(found, 0) + 1
+        rules = getattr(knowledge, "rules", None)
+        if rules is not None:
+            for rule in rules.rules:
+                if rule.head is not None:
+                    found = Signature(rule.head.predicate, rule.head.arity)
+                    counts.setdefault(found, 0)
+        ranked = sorted(counts, key=lambda sig: (-counts[sig], sig))
+        usable = [sig for sig in ranked if sig not in skip]
+        bias = cls(
+            target=signature,
+            body_predicates=tuple(usable[:max_predicates]),
+            **kwargs,
+        )
+        bias.omitted_predicates = tuple(usable[max_predicates:])
+        return bias
+
     @property
     def usable_predicates(self) -> tuple[Signature, ...]:
         """Everything that may appear in a body, recursion included."""
@@ -131,7 +181,11 @@ class LanguageBias:
         total = 0
         for signature in self.usable_predicates:
             total += self.max_variables**signature.arity
-        return total * (2 if self.allow_negation else 1)
+        total *= 2 if self.allow_negation else 1
+        if self.allow_comparison:
+            # One "!=" per unordered pair of variables.
+            total += self.max_variables * (self.max_variables - 1) // 2
+        return total
 
     def space_size(self) -> int:
         """Upper bound on the number of clause bodies to consider.
@@ -145,14 +199,21 @@ class LanguageBias:
 
     def describe(self) -> str:
         predicates = ", ".join(str(p) for p in self.usable_predicates) or "(none)"
+        omitted = (
+            f"\n  omitted to bound the search: "
+            + ", ".join(str(p) for p in self.omitted_predicates)
+            if self.omitted_predicates
+            else ""
+        )
         return (
             f"learning {self.target} from {predicates}\n"
             f"  up to {self.max_body} body literal(s), {self.max_clauses} clause(s), "
             f"{self.max_variables} variables\n"
             f"  recursion {'on' if self.allow_recursion else 'off'}, "
-            f"negation {'on' if self.allow_negation else 'off'}\n"
+            f"negation {'on' if self.allow_negation else 'off'}, "
+            f"comparison {'on' if self.allow_comparison else 'off'}\n"
             f"  {self.literal_count()} candidate literals, "
-            f"up to {self.space_size():,} bodies before pruning"
+            f"up to {self.space_size():,} bodies before pruning" + omitted
         )
 
     def __str__(self) -> str:

@@ -22,6 +22,7 @@ __all__ = [
     "demo_policy",
     "demo_learn",
     "demo_induce",
+    "demo_correct",
 ]
 
 RULE = "-" * 72
@@ -424,6 +425,46 @@ def demo_induce(json_output: bool = False) -> int:
     return 0
 
 
+def demo_correct(json_output: bool = False) -> int:
+    """Beyond the roadmap: fix the rules by pointing at wrong answers."""
+    _heading("Correcting a policy from one complaint", "teaching by correction")
+    from .induction.repair import Corrector
+
+    kb = KnowledgeBase("policy")
+    kb.add_facts(
+        [
+            "employee(dana)", "employee(tom)", "employee(sofia)",
+            "role(dana, analyst)", "role(tom, analyst)", "role(sofia, analyst)",
+            "suspended(tom)",
+        ]
+    )
+    kb.add_rules("may_read(E) :- role(E, analyst).")
+
+    print("the rule as written:")
+    print("  may_read(E) :- role(E, analyst).")
+    print("\nwho it lets in:")
+    print("  " + ", ".join(sorted(str(a) for a in kb.engine().model.by_predicate("may_read"))))
+    print("\nbut Tom is suspended. Rather than rewriting the rule by hand:\n")
+    print("  > :wrong may_read(tom)\n")
+
+    repairs = Corrector(kb).reject("may_read(tom)")
+    for index, repair in enumerate(repairs, 1):
+        print(f"  [{index}] " + repair.describe().replace("\n", "\n  "))
+    print()
+
+    best = repairs[0]
+    best.apply(kb)
+    print("accepting the first:")
+    print("  " + ", ".join(sorted(str(a) for a in kb.engine().model.by_predicate("may_read"))))
+    print()
+    print("What makes this usable is the second line of each proposal: the cost.")
+    print("Dropping the rule also fixes the complaint, and the report shows it")
+    print("would take two correct answers with it. A change that repairs the")
+    print("case in front of you and quietly breaks four others is worse than no")
+    print("change, and only measuring both makes that visible.")
+    return 0
+
+
 REGISTRY: dict[str, Callable[..., int]] = {
     "family": demo_family,
     "text": demo_text,
@@ -432,4 +473,5 @@ REGISTRY: dict[str, Callable[..., int]] = {
     "policy": demo_policy,
     "learn": demo_learn,
     "induce": demo_induce,
+    "correct": demo_correct,
 }

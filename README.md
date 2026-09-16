@@ -139,6 +139,7 @@ neuralmind demo repair   # Phase 4: hard rules correct a misread digit
 neuralmind demo policy   # Phase 6: an auditable access-control decision
 neuralmind demo learn    # beyond the roadmap: learn digits from sums alone
 neuralmind demo induce   # beyond the roadmap: learn the rules from examples
+neuralmind demo correct  # beyond the roadmap: fix rules by pointing at answers
 neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 ```
 
@@ -230,9 +231,22 @@ the second.
 
 Given examples of a relation, the learner searches for the rule that defines it.
 The method is generate-test-constrain: enumerate clauses shortest-first inside a
-declared bias, let **the real inference engine** decide which examples each one
-covers, and prune every extension of a body that covered nothing — a conjunction
-only ever narrows, so that pruning is what makes the search finish.
+bias, let **the real inference engine** decide which examples each one covers,
+and prune every extension of a body that covered nothing — a conjunction only
+ever narrows, so that pruning is what makes the search finish.
+
+The bias does not have to be written by hand. `LanguageBias.from_knowledge`
+takes the search space from whatever the knowledge base already mentions, so
+`:learn sibling/2` works without naming the relevant predicates first. Bodies
+may include `X != Y`, which most relational definitions need — a sibling is a
+child of the same parent *who is not the same person*.
+
+Rules build on each other, so a domain is taught rather than written:
+
+```
+:learn sibling/2   ->  sibling(A, B) :- parent(C, A), parent(C, B), A != B.
+:learn aunt/2      ->  aunt(A, B) :- parent(C, B), male(C), sibling(C, A).
+```
 
 ```console
 $ neuralmind induce --target ancestor/2 --body parent/2 --closed-world     -f "parent(maria,juho)" -f "parent(juho,aino)" ... --positive ...
@@ -252,6 +266,50 @@ fire at all. Exceptions work too, when negation is allowed:
 A learned rule is an ordinary rule. It proves its conclusions, gets checked
 against integrity constraints, and cross-checks against clingo, exactly like a
 hand-written one.
+
+### Correcting it by pointing at wrong answers
+
+Writing rules is the hard part; *noticing* a wrong answer is easy. `:wrong` and
+`:expect` turn the second into the first — you complain, it proposes concrete
+changes, each measured for what it fixes and what it breaks.
+
+```console
+> may_read(E) :- role(E, analyst).
+> :wrong may_read(tom)
+  may_read(tom) should not hold. Possible changes:
+  [1] narrow the rule so it no longer covers may_read(tom)
+      - may_read(E) :- role(E, analyst).
+      + may_read(E) :- role(E, analyst), not suspended(E).
+      fixes the complaint without disturbing anything else
+  [2] may_read(tom) comes from this rule; drop it
+      - may_read(E) :- role(E, analyst).
+      but it would stop these holding: may_read(dana), may_read(sofia)
+  apply one with ':accept <n>'
+```
+
+The second line of each proposal is what makes this usable. Dropping the rule
+*also* fixes the complaint — and takes two correct answers with it. A change
+that repairs the case in front of you and quietly breaks four others is worse
+than no change, and only measuring both makes that visible. `:accept` applies
+one, `:undo` reverses it. `neuralmind demo correct` runs it.
+
+### Learning without reading a preference into the data
+
+When several rules fit the examples equally well, picking one is an arbitrary
+choice, not a conclusion. The learner says so:
+
+```
+learned:
+  r(A) :- q(A).
+the examples do not single out one rule -- these fit exactly as well:
+  (instead of clause 1)  r(A) :- p(A).
+  more examples would decide between them; choosing one here would be a guess,
+  not a conclusion
+```
+
+The same honesty runs through the repair proposals, which report what a change
+would *newly* derive as well as what it would break — so a fix that happens to
+conclude more than you asked for is visible before you accept it.
 
 ### The caveat, demonstrated rather than disclaimed
 
@@ -399,9 +457,12 @@ strengths:
   phrasing. That gap is the perception layer, and nothing in the symbolic half
   can close it.
 - **Writing the rules.** Phase 2 is still where the work is. `induction/` learns
-  a rule when you can supply examples of the relation *and* a bias tight enough
-  to search — which is a real help, not a replacement for knowing the domain.
-  It learns definitions, not ontologies.
+  a rule when you can supply examples of the relation, derives its own search
+  space from the knowledge base, and proposes repairs when you point at a wrong
+  answer. That is a real help, not a replacement for knowing the domain: it
+  learns *definitions*, not ontologies. It will not tell you which concepts your
+  domain has, and a rule learned from three examples is a rule that fits three
+  examples — which is why it reports when the data does not settle the answer.
 - **Scale.** Symbolic search is combinatorial. The engine does semi-naive
   evaluation and reorders joins, which keeps the work proportional to the
   answer — a 400-link transitive closure is 80,600 atoms in two seconds, and

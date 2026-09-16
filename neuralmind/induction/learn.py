@@ -44,7 +44,9 @@ from ..inference.model import Model
 from ..inference.proof import ProofNode, explain
 from ..knowledge.base import KnowledgeBase
 from .bias import LanguageBias, Signature
-from .enumerate import candidate_bodies, candidate_literals, head_atom
+from .enumerate import (
+    candidate_bodies, candidate_comparisons, candidate_literals, head_atom,
+)
 
 __all__ = ["Examples", "Hypothesis", "RuleLearner"]
 
@@ -116,6 +118,9 @@ class Hypothesis:
     incomplete_reason: Optional[str] = None
     #: Positives the background alone already entailed, before any learning.
     baseline_positive: int = 0
+    #: Rules that fit the examples exactly as well as the ones chosen, keyed by
+    #: the position of the clause they compete with.
+    ties: dict = field(default_factory=dict)
     #: Rules removed from the background because they defined the target.
     stripped_from_background: tuple = ()
 
@@ -132,6 +137,16 @@ class Hypothesis:
     @property
     def correct(self) -> bool:
         return self.complete and self.consistent
+
+    @property
+    def underdetermined(self) -> bool:
+        """True if the examples do not single out one rule.
+
+        When several clauses cover exactly the same examples, picking one is an
+        arbitrary choice, not a conclusion. Saying so is the difference between
+        learning from the data and reading a preference into it.
+        """
+        return any(self.ties.values())
 
     @property
     def leaked(self) -> bool:
@@ -192,6 +207,17 @@ class Hypothesis:
             )
         )
         lines.append(f"verdict: {verdict}")
+        if self.underdetermined:
+            lines.append(
+                "the examples do not single out one rule -- these fit exactly as well:"
+            )
+            for index, alternatives in sorted(self.ties.items()):
+                for rule in alternatives:
+                    lines.append(f"  (instead of clause {index + 1})  {rule}")
+            lines.append(
+                "  more examples would decide between them; choosing one here "
+                "would be a guess, not a conclusion"
+            )
         if self.incomplete_reason:
             lines.append(f"stopped because: {self.incomplete_reason}")
         lines.append(
@@ -215,6 +241,11 @@ class Hypothesis:
             "incomplete_reason": self.incomplete_reason,
             "baseline_positive": self.baseline_positive,
             "leaked": self.leaked,
+            "underdetermined": self.underdetermined,
+            "ties": {
+                str(index): [str(rule) for rule in rules]
+                for index, rules in sorted(self.ties.items())
+            },
             "stripped_from_background": [str(r) for r in self.stripped_from_background],
         }
 
@@ -286,13 +317,14 @@ class RuleLearner:
         self.background = source
         self._cache: dict[tuple, Optional[tuple]] = {}
         self._evaluated = 0
-        self._literals = candidate_literals(bias)
+        self._literals = candidate_literals(bias) + candidate_comparisons(bias)
 
     # -- the search --------------------------------------------------------
 
     def learn(self, verbose: bool = False) -> Hypothesis:
         """Search for a definition, one clause at a time."""
         started = time.time()
+        hypothesis_ties: dict[int, list[Rule]] = {}
         baseline = self._evaluate([])
         baseline_positive = len(baseline[0]) if baseline else 0
         if baseline_positive and verbose:
@@ -316,7 +348,9 @@ class RuleLearner:
                     else f"evaluation budget of {self.budget} candidates was spent"
                 )
                 break
-            clause, newly_covered = found
+            clause, newly_covered, tied = found
+            if tied:
+                hypothesis_ties[len(learned)] = tied
             learned.append(clause)
             remaining -= newly_covered
             if verbose:
@@ -338,12 +372,18 @@ class RuleLearner:
             incomplete_reason=reason if remaining else None,
             baseline_positive=baseline_positive,
             stripped_from_background=self.stripped,
+            ties=hypothesis_ties,
         )
 
     def _find_clause(
         self, learned: Sequence[Rule], remaining: set, verbose: bool = False
-    ) -> Optional[tuple[Rule, frozenset]]:
-        """Best clause that explains some unexplained example and no negative."""
+    ) -> Optional[tuple[Rule, frozenset, list[Rule]]]:
+        """Best clause explaining some unexplained example and no negative.
+
+        Returns the chosen clause, what it covers, and any clauses that cover
+        exactly the same examples -- which the caller reports rather than
+        quietly discarding.
+        """
         already = self._evaluate(learned)
         already_positive = already[0] if already else frozenset()
 
@@ -353,10 +393,11 @@ class RuleLearner:
 
         for size in range(1, self.bias.max_body + 1):
             best: Optional[tuple[int, str, Rule, frozenset]] = None
+            equal: dict[frozenset, list[Rule]] = {}
             for rule, body, _ in candidate_bodies(self.bias, size, self._literals):
                 if self._evaluated >= self.budget:
                     break
-                body_set = frozenset(str(literal) for literal in body)
+                body_set = frozenset(str(part) for part in body)
                 if any(pruned <= body_set for pruned in useless):
                     continue
                 result = self._evaluate([*learned, rule])
@@ -369,11 +410,14 @@ class RuleLearner:
                     continue
                 if negative:
                     continue  # covers something it must not
+                equal.setdefault(gained, []).append(rule)
                 score = (len(gained), str(rule))
                 if best is None or score > (best[0], best[1]):
                     best = (len(gained), str(rule), rule, gained)
             if best is not None:
-                return best[2], best[3]
+                # Anything covering the same examples is an equally good answer.
+                tied = [r for r in equal.get(best[3], []) if r is not best[2]]
+                return best[2], best[3], tied
             if self._evaluated >= self.budget:
                 break
         return None
