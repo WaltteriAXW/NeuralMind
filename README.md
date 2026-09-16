@@ -231,7 +231,7 @@ them, which is the honest failure mode but still a failure.
 | Layer | Module | What it does |
 |---|---|---|
 | Symbols | `core/` | Atoms, rules, an ASP/Datalog parser. Checks variable safety and negation stratification up front, so a malformed knowledge base fails with a pointed error instead of a wrong fixpoint. |
-| Inference | `inference/` | Semi-naive forward chaining that records *why* each atom was derived. Optional clingo backend for choice rules, aggregates and optimisation — plus a cross-check that verifies the Python engine against it. |
+| Inference | `inference/` | Semi-naive forward chaining that records *why* each atom was derived, with join reordering so each step is an indexed lookup. Optional clingo backend for choice rules, aggregates and optimisation — plus a cross-check that verifies the Python engine against it. |
 | Knowledge | `knowledge/` | Facts with provenance and confidence, rule files, an RDF bridge. |
 | Perception | `perception/` | A controlled-English grammar (implications, universals, questions), spaCy dependency extraction for freer text, and a ~13k-parameter CNN in NumPy for images. |
 | Consistency | `consistency/` | The Type 5 layer: the same rules evaluated in fuzzy logic over perception confidences, plus repair by exact weighted model counting. |
@@ -314,9 +314,13 @@ strengths:
   a rule when you can supply examples of the relation *and* a bias tight enough
   to search — which is a real help, not a replacement for knowing the domain.
   It learns definitions, not ontologies.
-- **Scale.** Symbolic search is combinatorial. `clingo` is heavily optimised and
-  the guard rails turn runaway recursion into an error, but a large enough
-  problem is still a large problem.
+- **Scale.** Symbolic search is combinatorial. The engine does semi-naive
+  evaluation and reorders joins, which keeps the work proportional to the
+  answer — a 400-link transitive closure is 80,600 atoms in two seconds, and
+  `benchmarks/bench_inference.py` reports the ratio that shows it. But `clingo`
+  is still far faster for anything combinatorial, the guard rails turn runaway
+  recursion into an error rather than a hang, and a large enough problem is
+  still a large problem.
 - **Brittleness.** A rule that does not cover a case simply does not fire. The
   failure attribution in `neuralmind eval` exists precisely because that is the
   common failure, and you want to know it is happening.

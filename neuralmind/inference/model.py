@@ -15,7 +15,7 @@ from typing import Iterable, Iterator, Optional
 from ..core.program import Rule
 from ..core.terms import Atom, Const, Substitution, Var
 
-__all__ = ["Justification", "Violation", "Model", "match_atom"]
+__all__ = ["Justification", "Violation", "Model", "AtomIndex", "match_atom"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,60 @@ class Violation:
         return self.describe()
 
 
+class AtomIndex:
+    """Ground atoms indexed by predicate and by each constant argument.
+
+    Lookup picks the most selective bound argument, so matching
+    ``parent(alice, X)`` scans only the atoms whose first argument is
+    ``alice`` rather than every ``parent`` fact. The forward chainer keeps one
+    of these for the whole model and a second for each round's newly derived
+    atoms, which is what makes semi-naive evaluation cheap.
+    """
+
+    __slots__ = ("by_signature", "by_argument", "_count")
+
+    def __init__(self) -> None:
+        self.by_signature: dict[tuple[str, int], list[Atom]] = {}
+        self.by_argument: dict[tuple, list[Atom]] = {}
+        self._count = 0
+
+    def add(self, atom: Atom) -> None:
+        self.by_signature.setdefault(atom.signature, []).append(atom)
+        for position, argument in enumerate(atom.args):
+            if isinstance(argument, Const):
+                key = (atom.signature, position, argument)
+                self.by_argument.setdefault(key, []).append(atom)
+        self._count += 1
+
+    def candidates(self, pattern: Atom) -> list[Atom]:
+        """Atoms that could match ``pattern``, via the most selective index."""
+        best: Optional[list[Atom]] = None
+        for position, argument in enumerate(pattern.args):
+            if isinstance(argument, Const):
+                bucket = self.by_argument.get((pattern.signature, position, argument))
+                if bucket is None:
+                    return []  # nothing has that constant in that position
+                if best is None or len(bucket) < len(best):
+                    best = bucket
+        if best is None:
+            return self.by_signature.get(pattern.signature, [])
+        return best
+
+    def signatures(self) -> set[tuple[str, int]]:
+        return set(self.by_signature)
+
+    def has(self, signature: tuple[str, int]) -> bool:
+        return signature in self.by_signature
+
+    def __len__(self) -> int:
+        return self._count
+
+    def clear(self) -> None:
+        self.by_signature.clear()
+        self.by_argument.clear()
+        self._count = 0
+
+
 @dataclass
 class Model:
     """A set of ground atoms with provenance and an argument index."""
@@ -78,8 +132,7 @@ class Model:
     #: Set when reasoning stopped early because a limit was hit.
     truncated: Optional[str] = None
 
-    _by_sig: dict[tuple[str, int], list[Atom]] = field(default_factory=dict, repr=False)
-    _by_arg: dict[tuple, list[Atom]] = field(default_factory=dict, repr=False)
+    index: AtomIndex = field(default_factory=AtomIndex, repr=False)
 
     # -- population ------------------------------------------------------
 
@@ -95,10 +148,7 @@ class Model:
         return is_new
 
     def _index(self, atom: Atom) -> None:
-        self._by_sig.setdefault(atom.signature, []).append(atom)
-        for position, arg in enumerate(atom.args):
-            if isinstance(arg, Const):
-                self._by_arg.setdefault((atom.signature, position, arg), []).append(atom)
+        self.index.add(atom)
 
     # -- lookup ----------------------------------------------------------
 
@@ -114,24 +164,16 @@ class Model:
     def by_predicate(self, predicate: str, arity: Optional[int] = None) -> list[Atom]:
         """All atoms for a predicate, optionally restricted to one arity."""
         if arity is not None:
-            return list(self._by_sig.get((predicate, arity), ()))
+            return list(self.index.by_signature.get((predicate, arity), ()))
         found: list[Atom] = []
-        for (name, _), atoms in self._by_sig.items():
+        for (name, _), atoms in self.index.by_signature.items():
             if name == predicate:
                 found.extend(atoms)
         return found
 
     def candidates(self, pattern: Atom) -> list[Atom]:
         """Atoms that could match ``pattern``, using the most selective index."""
-        best: Optional[list[Atom]] = None
-        for position, arg in enumerate(pattern.args):
-            if isinstance(arg, Const):
-                bucket = self._by_arg.get((pattern.signature, position, arg), [])
-                if best is None or len(bucket) < len(best):
-                    best = bucket
-        if best is None:
-            return self._by_sig.get(pattern.signature, [])
-        return best
+        return self.index.candidates(pattern)
 
     def query(self, pattern: Atom) -> list[tuple[Atom, dict[str, Const]]]:
         """Every atom matching ``pattern``, with the variable bindings used."""

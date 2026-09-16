@@ -53,6 +53,25 @@ asserted.
 Semi-naive forward chaining over stratified Datalog, computing the least model.
 For every derived atom it records the rule instances that derived it.
 
+**Semi-naive evaluation.** Each round derives only what uses at least one atom
+found in the previous round. A rule fires once per body position that could
+match something new, with that position drawing from the delta and the rest
+from the whole model; the union of those variants is exactly the set of new
+derivations. Naive iteration re-derives the whole relation every round, costing
+an extra factor of the number of rounds -- on a transitive closure, the chain
+length. The benchmark reports atoms examined per atom derived, which is flat at
+about 3 under semi-naive evaluation and grows without bound under naive
+iteration.
+
+**Join ordering.** `Rule.plan()` reorders body literals so each step shares a
+variable with something already bound. Written as
+`cousin(A,B) :- parent(P,A), parent(Q,B), sibling(P,Q).` the first two literals
+share nothing, so source order enumerates every pair of parents before the
+sibling check discards almost all of them. Reordered, each step is an indexed
+lookup: on 800 families that is 4,000 atoms examined instead of 1,282,400.
+Conjunction is commutative, so this changes only the cost -- and proofs are
+rendered back in source order, so a reader still sees the rule they wrote.
+
 **Proof trees fall out of that record.** `explain()` reads the tree off the
 justifications; nothing is reconstructed afterwards, so a proof cannot disagree
 with the answer it explains. Recursion terminates because a justification is

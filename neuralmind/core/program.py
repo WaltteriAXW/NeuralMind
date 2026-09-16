@@ -126,8 +126,18 @@ class Rule:
                         progress = True
 
         flush()
-        for lit in self.positive_literals:
-            steps.append(Step("match", literal=lit))
+        # Join order. Taking body literals in source order can force a
+        # cartesian product: with "parent(P,A), parent(Q,B), sibling(P,Q)"
+        # the first two literals share nothing, so every pair of parents is
+        # enumerated before the sibling check rejects almost all of them.
+        # Picking a literal that shares a variable with what is already bound
+        # keeps each step indexed instead. Conjunction is commutative, so this
+        # changes only the cost.
+        remaining = list(enumerate(self.positive_literals))
+        while remaining:
+            choice = _best_join(remaining, bound)
+            origin, lit = remaining.pop(choice)
+            steps.append(Step("match", literal=lit, origin=origin))
             bound.update(variables_in(lit))
             flush()
 
@@ -164,6 +174,10 @@ class Step:
     compare: Optional[Compare] = None
     variable: Optional[str] = None
     expression: Optional[object] = None
+    #: Position of this literal in the rule as written. Execution may reorder
+    #: the body for speed; proofs are rendered back in source order so what a
+    #: reader sees still matches the rule they wrote.
+    origin: Optional[int] = None
 
     def __str__(self) -> str:
         if self.kind == "assign":
@@ -314,6 +328,29 @@ class Program:
         if include_shown and self.shown:
             lines.extend(f"#show {name}/{arity}." for name, arity in sorted(self.shown))
         return "\n".join(lines)
+
+
+def _best_join(remaining: Sequence[tuple], bound: set) -> int:
+    """Index into ``remaining`` of the literal to match next.
+
+    Prefers a literal already sharing a variable with something bound, since
+    that one can be looked up by index rather than scanned. Ties, and the very
+    first literal, go to whichever has the most constants, then to source
+    order -- so a rule with no join structure behaves exactly as written.
+    """
+    best_index = 0
+    best_score: Optional[tuple] = None
+    for position, (origin, literal) in enumerate(remaining):
+        variables = set(variables_in(literal))
+        shares = bool(variables & bound)
+        constants = sum(
+            1 for argument in literal.atom.args if not isinstance(argument, Var)
+        )
+        score = (shares, constants, -origin)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_index = position
+    return best_index
 
 
 def _negative_cycle(rules: Sequence[Rule]) -> list[str]:
