@@ -230,10 +230,7 @@ class Shell:
         for record in perception.facts:
             label = str(record.atom)
             if record.confidence < 1.0:
-                label += (
-                    f"   [confidence {record.confidence:.2f} -- no determiner or "
-                    "copula to anchor the reading, so this is a guess]"
-                )
+                label += f"   [confidence {record.confidence:.2f} -- {_why_a_guess(record)}]"
             added.append(label)
             self.transcript.append(f"{record.atom}.")
         for rule in perception.rules:
@@ -709,6 +706,21 @@ def _looks_like_logic(text: str) -> bool:
     if ":-" in stripped:
         return True
     return bool(_LOGIC_CALL.match(stripped))
+
+
+def _why_a_guess(record) -> str:
+    """Why a fact came in below full confidence, in the reader's own terms.
+
+    The two readers are uncertain for different reasons, and saying so is the
+    point: a grammar reading with nothing to anchor it is a different kind of
+    doubt from a dependency pattern that usually but not always means what it
+    looks like.
+    """
+    if record.provenance.endswith("narrative"):
+        return "read from a dependency parse of free text, so this is a guess"
+    return (
+        "no determiner or copula to anchor the reading, so this is a guess"
+    )
 
 
 def _indent(text: str, prefix: str = "  ") -> str:

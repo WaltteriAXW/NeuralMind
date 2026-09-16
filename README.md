@@ -156,7 +156,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | 7 | Say what fraction of failures are perception vs reasoning | **1200/1200** to proof depth 4; attribution built in |
 | — | *beyond the roadmap:* learn perception through the rules | **98.20%** digit accuracy from **zero** digit labels |
 | — | *beyond the roadmap:* learn the rules from examples | recovers `grandparent`, recursive `ancestor`, and negated exceptions |
-| — | *the real benchmark:* ProofWriter corpus | **100%** on all five depth splits; see below |
+| — | *the real benchmark:* ProofWriter corpus | **100%** on all five depth splits, 113,632 questions overall; see below |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
@@ -332,37 +332,47 @@ both. A learned rule is a proposal for review, not a policy.
 ## Measured on the real benchmark
 
 The numbers above are on *generated* problems. Here is the same pipeline on the
-actual **ProofWriter corpus** (Allen Institute for AI) — 34,596 questions over
-2,340 theories it was not written against:
+actual **ProofWriter corpus** (Allen Institute for AI) — every question in
+every CWA test split, 113,632 of them over 12,862 theories it was not written
+against. Two columns, because the perception layer has two readers and which
+one you use is most of the answer:
 
-| Split | Accuracy | Questions | Theories extracted exactly |
-|---|---|---|---|
-| depth-0 | **100.0%** | 1,476 | 400/400 |
-| depth-1 | **100.0%** | 3,098 | 400/400 |
-| depth-2 | **100.0%** | 4,344 | 400/400 |
-| depth-3 | **100.0%** | 5,636 | 400/400 |
-| depth-5 | **100.0%** | 8,128 | 400/400 |
-| birds-electricity | **99.9%** | 5,270 | 139/140 |
-| NatLang *(crowdsourced)* | **52.4%** | 6,644 | 0/400 |
-| **overall** | **90.9%** | 34,596 | |
+| Split | Grammar only | Both readers | Questions | Theories extracted exactly |
+|---|---|---|---|---|
+| depth-0 | 100.0% | **100.0%** | 19,998 | 5397/5397 |
+| depth-1 | 100.0% | **100.0%** | 20,230 | 2613/2613 |
+| depth-2 | 100.0% | **100.0%** | 19,840 | 1815/1815 |
+| depth-3 | 100.0% | **100.0%** | 20,228 | 1430/1430 |
+| depth-5 | 100.0% | **100.0%** | 20,058 | 985/985 |
+| birds-electricity | 99.9% | **99.9%** | 5,270 | 139/140 |
+| NatLang *(crowdsourced)* | 52.4% | **70.5%** | 8,008 | 1/482 |
+| **overall** | 96.6% | **97.9%** | 113,632 | 12,380/12,862 |
 
 ```bash
 python scripts/download_proofwriter.py
 neuralmind eval --corpus depth-5 -n 200
 ```
 
-Two things this establishes and one it does not.
+Three things this establishes and one it does not.
 
-**The reasoning is exact.** Across every split, including the ones it does
-badly on, *zero* failures were attributable to the engine — and separately,
-all 890 theories checked derived exactly the same atoms as clingo, atom for
-atom. Accuracy is bounded entirely by perception, which is the architectural
-claim this project exists to test.
+**The reasoning is exact.** Across every split, under either reader, including
+the ones it does badly on, *zero* failures were attributable to the engine —
+and separately, all 890 theories checked derived exactly the same atoms as
+clingo, atom for atom. Accuracy is bounded entirely by perception, which is the
+architectural claim this project exists to test.
 
-**NatLang is the honest ceiling.** That split's theories are crowdsourced
-English rather than generated, and a controlled grammar gets about half of it.
-No amount of grammar engineering closes that gap; it is the weakness the
-architecture is supposed to have, measured rather than argued about.
+**Neither reader wins everywhere.** The controlled grammar is exact on the
+generated splits and gets about half of NatLang. The narrative reader is the
+reverse: 70.9% on NatLang, 51.1% on birds-electricity. So `TextPerceptor`
+chooses per input, using the grammar's *refusal* as the signal — if it reads
+every sentence it is exact and wins, and if it refuses any, the passage is
+outside its register. That is the "both readers" column, and it costs nothing
+on the splits the grammar already handles.
+
+**NatLang is still the ceiling.** 52% to 70% is the reachable part, and the
+rest is not a parsing problem: idioms read as attributes, and world knowledge
+the text assumes and never states. It is the weakness the architecture is
+supposed to have, measured rather than argued about.
 
 **It does not establish that this is easy.** Getting the synthetic splits from
 68% to 100% took finding and fixing eight distinct bugs, three of them in the
@@ -377,7 +387,7 @@ the number.
 | Symbols | `core/` | Atoms, rules, an ASP/Datalog parser. Checks variable safety and negation stratification up front, so a malformed knowledge base fails with a pointed error instead of a wrong fixpoint. |
 | Inference | `inference/` | Semi-naive forward chaining that records *why* each atom was derived, with join reordering so each step is an indexed lookup. Optional clingo backend for choice rules, aggregates and optimisation — plus a cross-check that verifies the Python engine against it. |
 | Knowledge | `knowledge/` | Facts with provenance and confidence, rule files, an RDF bridge. |
-| Perception | `perception/` | A controlled-English grammar (implications, universals, questions), spaCy dependency extraction for freer text, and a ~13k-parameter CNN in NumPy for images. |
+| Perception | `perception/` | A controlled-English grammar (implications, universals, questions), spaCy dependency extraction for freer text, a narrative reader for free-form prose, and a ~13k-parameter CNN in NumPy for images. |
 | Consistency | `consistency/` | The Type 5 layer: the same rules evaluated in fuzzy logic over perception confidences, plus repair by exact weighted model counting. |
 | Output | `output/` | JSON, ASCII proof trees, and a deterministic template realiser. |
 | Learning | `learning/` | Runs the rules backward: exact weighted model counting over a truth tensor the engine fills, so a logical consequence becomes a training signal. |
@@ -451,11 +461,13 @@ Stated plainly, because the architecture's weaknesses are as predictable as its
 strengths:
 
 - **Open-domain language.** The controlled grammar covers a register, not
-  English. spaCy widens it; neither handles ambiguity, ellipsis, or anything
-  needing world knowledge. ProofWriter's crowdsourced NatLang split measures
-  this precisely: **52.4%**, against 100% on the same reasoning in generated
-  phrasing. That gap is the perception layer, and nothing in the symbolic half
-  can close it.
+  English. The narrative reader covers a second register approximately. Neither
+  handles ambiguity, ellipsis, or anything needing world knowledge.
+  ProofWriter's crowdsourced NatLang split measures this precisely: **70.5%**,
+  against 100% on the same reasoning in generated phrasing. Adding the second
+  reader moved that from 52.4%, which is the part that was a parsing problem;
+  the rest is the perception layer, and nothing in the symbolic half can close
+  it.
 - **Writing the rules.** Phase 2 is still where the work is. `induction/` learns
   a rule when you can supply examples of the relation, derives its own search
   space from the knowledge base, and proposes repairs when you point at a wrong

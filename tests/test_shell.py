@@ -10,6 +10,7 @@ import pytest
 
 from neuralmind.core.parser import parse_atom
 from neuralmind.shell import Shell
+from neuralmind.perception.text import spacy_available
 
 
 @pytest.fixture
@@ -66,6 +67,20 @@ def test_an_unanchored_reading_is_marked_as_a_guess(shell):
 
 def test_an_anchored_reading_is_certain(shell):
     assert "guess" not in shell.handle("The cat chases the mouse.")
+
+
+@pytest.mark.skipif(not spacy_available(), reason="spaCy model not installed")
+def test_free_text_is_read_and_says_which_reader_guessed(shell):
+    """The session reads prose the controlled grammar refuses outright.
+
+    The two readers doubt for different reasons, so the note says which one
+    is speaking rather than giving the grammar's reason for a parse result.
+    """
+    response = shell.handle(
+        "Charlie is green, but often kind, even when he is blue and cold."
+    )
+    assert "attr(charlie, kind)" in response
+    assert "dependency parse" in response and "0.70" in response
 
 
 # -- answering -------------------------------------------------------------
