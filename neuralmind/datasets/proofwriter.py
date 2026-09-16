@@ -45,15 +45,27 @@ class Question:
     #: Number of rule applications needed; 0 means it was stated outright.
     depth: int
     #: True when the question asserts the *absence* of the goal, as in
-    #: "The mouse is not blue." Such a question is true exactly when the goal
-    #: is not derivable -- the closed-world reading.
+    #: "The mouse is not blue." Under the closed-world reading such a question
+    #: is true exactly when the goal is not derivable; under the open-world
+    #: reading it asks about the strongly negated atom ``-blue(mouse)``.
     negated: bool = False
+    #: Open-world only: the corpus says the theory settles neither polarity.
+    #: ``answer`` is meaningless when this is set, so read :attr:`status`.
+    unknown: bool = False
+
+    @property
+    def status(self) -> str:
+        """The gold answer as one of ``yes`` / ``no`` / ``unknown``."""
+        if self.unknown:
+            return "unknown"
+        return "yes" if self.answer else "no"
 
     def to_dict(self) -> dict:
         return {
             "question": self.text,
             "goal": "%s(%s)" % (self.goal[0], ", ".join(self.goal[1:])),
             "answer": self.answer,
+            "status": self.status,
             "depth": self.depth,
             "negated": self.negated,
         }
@@ -65,6 +77,10 @@ class Problem:
 
     theory: str
     questions: list[Question] = field(default_factory=list)
+    #: ``cwa`` or ``owa``. Under ``owa`` every predicate is open, the theory
+    #: may assert and derive strongly negated atoms, and a question the theory
+    #: does not settle is answered ``unknown`` rather than ``no``.
+    world: str = "cwa"
     #: Gold facts as ``(predicate, *arguments)`` tuples.
     gold_facts: set[tuple] = field(default_factory=set)
     #: Gold rules as ``(head_template, [body_templates])`` over the variable X.

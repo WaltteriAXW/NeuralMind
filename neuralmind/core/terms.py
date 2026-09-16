@@ -106,6 +106,27 @@ class Atom:
         return (self.predicate, len(self.args))
 
     @property
+    def is_negated(self) -> bool:
+        """True for a *strongly* negated atom, ``-flies(tweety)``.
+
+        Strong negation is a claim that something is false, which is not the
+        same as failing to derive it. Under an open-world reading only the
+        first justifies answering "no".
+        """
+        return self.predicate.startswith("-")
+
+    def complement(self) -> "Atom":
+        """``p(x)`` <-> ``-p(x)``. Its own inverse."""
+        if self.is_negated:
+            return Atom(self.predicate[1:], self.args)
+        return Atom(f"-{self.predicate}", self.args)
+
+    @property
+    def positive(self) -> "Atom":
+        """This atom with any strong negation stripped."""
+        return self.complement() if self.is_negated else self
+
+    @property
     def is_ground(self) -> bool:
         return all(is_ground(a) for a in self.args)
 

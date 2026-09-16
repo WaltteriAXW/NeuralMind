@@ -219,9 +219,30 @@ class Model:
         return sorted(self.justifications.get(atom, ()), key=lambda j: (j.depth, len(j.support)))
 
     @property
+    def contradictions(self) -> list[Atom]:
+        """Atoms derived alongside their own strong negation.
+
+        ``p(x)`` and ``-p(x)`` together say the world both is and is not a
+        certain way. clingo rejects such a program outright; the Python engine
+        reports it, because knowing *which* pair clashed is the useful part.
+        The positive atom of each pair is returned, once.
+        """
+        found = [
+            atom
+            for atom in self.atoms
+            if not atom.is_negated and atom.complement() in self.atoms
+        ]
+        return sorted(found, key=str)
+
+    @property
+    def coherent(self) -> bool:
+        """True if nothing was derived together with its own strong negation."""
+        return not self.contradictions
+
+    @property
     def consistent(self) -> bool:
-        """True if no integrity constraint was violated."""
-        return not self.violations
+        """True if no integrity constraint was violated and nothing contradicts."""
+        return not self.violations and self.coherent
 
     def summary(self) -> dict:
         counts: dict[str, int] = {}
@@ -232,6 +253,7 @@ class Model:
             "predicates": dict(sorted(counts.items())),
             "iterations": self.iterations,
             "violations": len(self.violations),
+            "contradictions": [str(a) for a in self.contradictions],
             "consistent": self.consistent,
             "truncated": self.truncated,
         }

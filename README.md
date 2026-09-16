@@ -35,6 +35,37 @@ The tree is not a rendering of the answer — it is the record of the rule
 instances that fired. It cannot disagree with the conclusion it explains, which
 is the one guarantee a generated explanation can never offer.
 
+## One object to hold
+
+`Mind` is the entry point a host keeps. It takes observations as they come,
+answers when asked, and says what it does not know.
+
+```python
+from neuralmind import Mind
+
+mind = Mind()                      # no domain, no mode: it is never told where it is
+mind.tell("Bob is a cat. All cats are mammals.")
+mind.add_rules("#open furry/1.")   # silence about furry means unknown, not no
+
+answer = mind.ask("Is Bob a mammal?")
+answer.status                      # "yes"
+mind.brief(answer)                 # "Yes — Bob is a mammal, because Bob is a cat."
+
+mind.brief(mind.ask("furry(bob)"))
+# "Unknown — nothing here says whether Bob is furry."
+```
+
+Answers are three-valued, and **unknown is not no**. Which of the two applies
+is the program's to declare: a *closed* predicate is fully described, so
+failing to derive it proves it false; an *open* one may hold for reasons
+nothing here mentions. A `no` can also be *proven*, through strong negation —
+`-flies(pingu)` is a claim, where `not flies(pingu)` is only an absence.
+
+Every brief line is a compression of the proof, never a paraphrase of it: each
+clause names an atom the proof contains, and a test reads them back to check.
+Across 1,440 corpus answers, 100% fit the 25-word budget and every clause
+traced to a node.
+
 ## Talk to it
 
 `neuralmind shell` is an interactive session — a REPL, not a chat interface,
@@ -157,6 +188,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *beyond the roadmap:* learn perception through the rules | **98.20%** digit accuracy from **zero** digit labels |
 | — | *beyond the roadmap:* learn the rules from examples | recovers `grandparent`, recursive `ancestor`, and negated exceptions |
 | — | *the real benchmark:* ProofWriter corpus | **100%** on all five depth splits, 113,632 questions overall; see below |
+| — | *Phase Two, P2.0:* three-valued answers | **100%** on the open-world splits too, where 46% of answers are *unknown* |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
@@ -351,6 +383,22 @@ one you use is most of the answer:
 ```bash
 python scripts/download_proofwriter.py
 neuralmind eval --corpus depth-5 -n 200
+```
+
+The corpus also ships an **open-world** reading of the same theories, where a
+question the theory does not settle is answered *Unknown* rather than *no*.
+About 46% of those questions are Unknown, so a system that treats
+failure-to-derive as falsity scores around 54% on them. Every question in every
+OWA test split:
+
+| Split | Accuracy | Questions | Unknown in gold |
+|---|---|---|---|
+| depth-0 … depth-5 | **100.0%** | 100,450 | 43–48% |
+| birds-electricity | **99.9%** | 5,270 | 75% |
+| NatLang *(crowdsourced)* | **70.5%** | 8,008 | 50% |
+
+```bash
+neuralmind eval --corpus depth-5 --world owa -n 200
 ```
 
 Three things this establishes and one it does not.

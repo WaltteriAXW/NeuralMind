@@ -210,6 +210,28 @@ class _Parser:
             self.expect("DOT")
             program.shown.add((name, arity))
             return
+        if directive.value == "#open" and self.current.kind == "DOT":
+            # A bare "#open." makes the whole program open-world.
+            self.advance()
+            program.open_world = True
+            return
+        if directive.value in ("#open", "#closed"):
+            # Which predicates answer "unknown" when nothing derives them, and
+            # which answer "no". Silence means something different in each case
+            # and the program is the only place that can say which.
+            while True:
+                name = self.expect("ID").value
+                self.expect("OP", "/")
+                arity = int(self.expect("NUM").value)
+                if directive.value == "#open":
+                    program.open_predicates.add((name, arity))
+                else:
+                    program.open_predicates.discard((name, arity))
+                    program.closed_predicates.add((name, arity))
+                if not self.accept("OP", ","):
+                    break
+            self.expect("DOT")
+            return
         if directive.value == "#const":
             name = self.expect("ID").value
             self.expect("OP", "=")
@@ -235,6 +257,8 @@ class _Parser:
             return Literal(self._parse_atom(), negated=True)
         # An atom and the left side of a comparison start the same way, so
         # parse optimistically and reinterpret if a comparison operator turns up.
+        if self.current.kind == "OP" and self.current.value == "-" and self.peek().kind == "ID":
+            return Literal(self._parse_atom())
         if self.current.kind == "ID" and self.peek().value == "(":
             atom = self._parse_atom()
             if self._at_comparison():
@@ -257,7 +281,10 @@ class _Parser:
         return token.kind == "OP" and token.value in ("=", "!=", "<", "<=", ">", ">=")
 
     def _parse_atom(self) -> Atom:
-        name = self.expect("ID").value
+        # "-p(x)" is strong negation: a claim that p(x) is false, as opposed to
+        # "not p(x)", which only says p(x) could not be derived.
+        strong = "-" if self.accept("OP", "-") else ""
+        name = strong + self.expect("ID").value
         if not self.accept("OP", "("):
             return Atom(name, ())
         args = [self._parse_expression()]

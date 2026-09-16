@@ -71,33 +71,48 @@ class TripleSchema:
     """
 
     style: str = "triple"
+    #: How a negative clause is written. ``"not_"`` makes it a separate
+    #: positive predicate, which is what the closed-world reading wants: the
+    #: contradiction constraints in ``triples.lp`` catch ``attr`` and
+    #: ``not_attr`` together. ``"-"`` makes it *strong* negation, a claim that
+    #: the positive atom is false, which is what an open-world theory means and
+    #: what lets a "no" be proven rather than assumed.
+    negation: str = NEG_PREFIX
+
+    @property
+    def strong(self) -> bool:
+        """True when negatives are strong negation rather than a renamed predicate."""
+        return self.negation == "-"
+
+    def _prefix(self, negated: bool) -> str:
+        return self.negation if negated else ""
 
     def attribute(self, subject: Term, attribute: str, negated: bool = False) -> Atom:
         if self.style == "direct":
-            name = (NEG_PREFIX if negated else "") + normalise_symbol(attribute)
+            name = self._prefix(negated) + normalise_symbol(attribute)
             return Atom(name, (subject,))
-        return Atom((NEG_PREFIX if negated else "") + ATTR, (subject, Const(normalise_symbol(attribute))))
+        return Atom(self._prefix(negated) + ATTR, (subject, Const(normalise_symbol(attribute))))
 
     def membership(self, subject: Term, class_name: str, negated: bool = False) -> Atom:
         if self.style == "direct":
-            name = (NEG_PREFIX if negated else "") + normalise_symbol(class_name)
+            name = self._prefix(negated) + normalise_symbol(class_name)
             return Atom(name, (subject,))
-        return Atom((NEG_PREFIX if negated else "") + ISA, (subject, Const(normalise_symbol(class_name))))
+        return Atom(self._prefix(negated) + ISA, (subject, Const(normalise_symbol(class_name))))
 
     def action(self, subject: Term, verb: str, negated: bool = False) -> Atom:
         """An intransitive action: "the dog barks"."""
         if self.style == "direct":
-            return Atom((NEG_PREFIX if negated else "") + normalise_symbol(verb), (subject,))
+            return Atom(self._prefix(negated) + normalise_symbol(verb), (subject,))
         return Atom(
-            (NEG_PREFIX if negated else "") + ACT, (subject, Const(normalise_symbol(verb)))
+            self._prefix(negated) + ACT, (subject, Const(normalise_symbol(verb)))
         )
 
     def relation(self, subject: Term, verb: str, obj: Term, negated: bool = False) -> Atom:
         if self.style == "direct":
-            name = (NEG_PREFIX if negated else "") + normalise_symbol(verb)
+            name = self._prefix(negated) + normalise_symbol(verb)
             return Atom(name, (subject, obj))
         return Atom(
-            (NEG_PREFIX if negated else "") + REL,
+            self._prefix(negated) + REL,
             (subject, Const(normalise_symbol(verb)), obj),
         )
 
@@ -479,15 +494,23 @@ class ControlledEnglishParser:
     # -- clause -> atom ----------------------------------------------------
 
     def _to_literal(self, clause: Clause, bindings: dict[str, Term]) -> Literal:
-        """A rule-body literal, with negation read as negation-as-failure.
+        """A rule-body literal, with negation read as the schema says.
 
-        In a *fact*, "Alice is not green" is recorded as ``not_attr``, an
-        explicit negative assertion that the contradiction constraints in
-        ``triples.lp`` can catch. In a rule *condition* it means something
-        different -- "if it cannot be shown that ..." -- and must become a
-        negated literal. A positive literal over a predicate called
-        ``not_attr`` would never be derived, so the rule would never fire.
+        Under the closed-world schema, a *fact* "Alice is not green" is
+        recorded as ``not_attr``, an explicit negative the contradiction
+        constraints in ``triples.lp`` can catch. In a rule *condition* it means
+        something else -- "if it cannot be shown that ..." -- and must become a
+        negated literal, because a positive literal over a predicate called
+        ``not_attr`` is never derived and the rule would never fire.
+
+        Under the strong-negation schema there is no such split. "if it is not
+        green" means ``-green`` is *derivable*, so the condition is an ordinary
+        positive literal over the negated atom. Reading it as failure-to-derive
+        instead would be unsound: in an open world, not having proved something
+        is not the same as having proved it false.
         """
+        if self.schema.strong:
+            return Literal(self._to_atom(clause, bindings))
         positive = Clause(
             kind=clause.kind,
             subject=clause.subject,

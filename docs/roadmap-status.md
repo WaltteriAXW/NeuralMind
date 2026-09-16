@@ -97,6 +97,10 @@ rules no longer need to be written by hand *when examples of the relation exist
 and the bias can be stated*. Neither condition is free, and neither replaces
 knowing the domain.
 
+Phase One is complete. `docs/phase-two-status.md` tracks what comes after it,
+and P2.0 has already changed two things stated below: answers are now
+three-valued, and the open-world splits of the corpus are measured too.
+
 ## What is genuinely not built
 - **Vision beyond digits.** No Detectron2 or SAM integration. The perceptor
   interface takes any model with `predict_proba`, so the work is wiring, not

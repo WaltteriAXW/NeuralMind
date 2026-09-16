@@ -194,20 +194,39 @@ def cmd_eval(args) -> int:
                 file=sys.stderr,
             )
             return 2
-        if not proofwriter_corpus.available(args.corpus):
+        if args.world not in proofwriter_corpus.WORLDS:
             print(
-                f"the '{args.corpus}' split is not downloaded. Run "
-                "`python scripts/download_proofwriter.py`.",
+                f"unknown world {args.world!r}; choose from "
+                + ", ".join(proofwriter_corpus.WORLDS),
                 file=sys.stderr,
             )
             return 2
-        problems = proofwriter_corpus.load(args.corpus, limit=args.problems)
+        if not proofwriter_corpus.available(args.corpus, world=args.world):
+            print(
+                f"the '{args.corpus}' {args.world.upper()} split is not "
+                "downloaded. Run `python scripts/download_proofwriter.py`.",
+                file=sys.stderr,
+            )
+            return 2
+        problems = proofwriter_corpus.load(
+            args.corpus, limit=args.problems, world=args.world
+        )
         # These theories need one predicate per attribute: under the triple
         # schema every atom is attr/2, and a rule like "if smart and not white
         # then round" makes attr depend negatively on itself.
-        perceptor = TextPerceptor(schema=TripleSchema("direct"))
+        #
+        # Under the open-world reading a negative is strong negation: "-blue(x)"
+        # is a claim that has to be derived, not a predicate named "not_blue"
+        # that stands apart from "blue" and never interacts with it.
+        schema = TripleSchema(
+            "direct", negation="-" if args.world == "owa" else "not_"
+        )
+        perceptor = TextPerceptor(schema=schema)
         if not args.json:
-            print(f"ProofWriter corpus, {args.corpus}: {len(problems)} problems")
+            print(
+                f"ProofWriter corpus, {args.corpus} ({args.world.upper()}): "
+                f"{len(problems)} problems"
+            )
     else:
         from .datasets.proofwriter import generate
 
@@ -370,6 +389,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SPLIT",
         help="evaluate on the real ProofWriter corpus instead of generated "
         "problems: depth-0..depth-5, birds-electricity, NatLang",
+    )
+    evaluate_parser.add_argument(
+        "--world",
+        default="cwa",
+        choices=("cwa", "owa"),
+        help="which reading of the corpus: cwa answers yes/no, owa adds "
+        "unknown for what the theory does not settle (default: cwa)",
     )
     evaluate_parser.add_argument("-q", "--questions", type=int, default=6)
     evaluate_parser.add_argument("--seed", type=int, default=0)

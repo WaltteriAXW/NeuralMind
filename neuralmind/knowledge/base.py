@@ -77,6 +77,10 @@ class KnowledgeBase:
             else:
                 self.rules.add(rule)
         self.rules.shown |= program.shown
+        self.rules.open_world = self.rules.open_world or program.open_world
+        self.rules.open_predicates |= program.open_predicates
+        self.rules.closed_predicates |= program.closed_predicates
+        self.rules.open_predicates -= program.closed_predicates
         self.rules.constants.update(program.constants)
         self.rules.raw_asp.extend(program.raw_asp)
         if program.requires_asp:
@@ -163,6 +167,9 @@ class KnowledgeBase:
             constants=dict(self.rules.constants),
             raw_asp=list(self.rules.raw_asp),
             requires_asp=self.rules.requires_asp,
+            open_world=self.rules.open_world,
+            open_predicates=set(self.rules.open_predicates),
+            closed_predicates=set(self.rules.closed_predicates),
         )
         if check and not combined.raw_asp:
             combined.check()

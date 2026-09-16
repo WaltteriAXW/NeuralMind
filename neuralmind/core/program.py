@@ -210,6 +210,28 @@ class Program:
     raw_asp: list[str] = field(default_factory=list)
     #: Names of the features that put statements in :attr:`raw_asp`.
     requires_asp: tuple[str, ...] = ()
+    #: Set by a bare ``#open.``: every predicate is open unless declared
+    #: ``#closed``. This is what an open-world theory means -- silence about
+    #: a predicate the program never mentions is silence, not denial.
+    open_world: bool = False
+    #: Predicates declared ``#open``: underivable means *unknown*, not false.
+    open_predicates: set[tuple[str, int]] = field(default_factory=set)
+    #: Predicates declared ``#closed`` explicitly. Everything else is closed
+    #: too -- this set records the ones the program said so about, so a
+    #: merge can tell "closed by default" from "closed on purpose".
+    closed_predicates: set[tuple[str, int]] = field(default_factory=set)
+
+    def is_open(self, signature: tuple[str, int]) -> bool:
+        """Whether silence about this predicate means *unknown* rather than *no*.
+
+        Closed-world is the default, because that is what Phase One assumed
+        everywhere and what the CWA benchmarks are graded against.
+        """
+        name, arity = signature
+        key = (name.lstrip("-"), arity)
+        if key in self.closed_predicates:
+            return False
+        return self.open_world or key in self.open_predicates
 
     def __len__(self) -> int:
         return len(self.rules)
@@ -238,6 +260,10 @@ class Program:
             constants={**self.constants, **other.constants},
             raw_asp=list(self.raw_asp) + list(other.raw_asp),
             requires_asp=tuple(dict.fromkeys(self.requires_asp + other.requires_asp)),
+            open_world=self.open_world or other.open_world,
+            open_predicates=(self.open_predicates | other.open_predicates)
+            - (self.closed_predicates | other.closed_predicates),
+            closed_predicates=self.closed_predicates | other.closed_predicates,
         )
         return merged
 

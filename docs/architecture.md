@@ -7,6 +7,22 @@ contract between them is ground atoms with confidences.
 raw input ─→ perception ─→ knowledge base ─→ inference ─→ Type 5 check ─→ output
 ```
 
+## 0. The entry point (`neuralmind/mind.py`)
+
+`Mind` is what a host holds. It wraps the knowledge base, engine and perceptor,
+and takes **no domain, pack or mode argument** — a test asserts it never will.
+A host that has to declare what it is has already made the mind's hardest
+decision for it, and later phases work the situation out from observations
+instead.
+
+Answers are three-valued. `unknown` is a real answer, not a soft `no`, and
+which one applies is declared per predicate (`#open`, `#closed`, or a bare
+`#open.` for the whole program). A `no` can be proven rather than assumed,
+through strong negation: `-flies(pingu)` is a claim, `not flies(pingu)` is an
+absence, and deriving both `p` and `-p` is reported as a contradiction.
+
+See `docs/phase-two-status.md` for what is built and what is not.
+
 ## 1. Perception (`neuralmind/perception/`)
 
 The only place anything is learned. Its output is always

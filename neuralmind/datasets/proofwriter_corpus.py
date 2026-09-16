@@ -33,7 +33,7 @@ from typing import Iterator, Optional, Sequence
 from ..perception.lexicon import normalise_symbol, predicate_name
 from .proofwriter import Problem, Question
 
-__all__ = ["load", "available", "default_root", "SPLITS", "parse_representation"]
+__all__ = ["load", "available", "default_root", "SPLITS", "WORLDS", "parse_representation"]
 
 #: The CWA splits this loader understands.
 SPLITS = (
@@ -62,12 +62,19 @@ def default_root() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "proofwriter"
 
 
-def split_path(split: str, root: Optional[Path] = None) -> Path:
-    return (Path(root) if root else default_root()) / f"{split}-test.jsonl"
+#: The two readings the corpus ships, and the two this project implements.
+WORLDS = ("cwa", "owa")
 
 
-def available(split: str = "depth-2", root: Optional[Path] = None) -> bool:
-    return split_path(split, root).exists()
+def split_path(split: str, root: Optional[Path] = None, world: str = "cwa") -> Path:
+    prefix = "" if world == "cwa" else f"{world}-"
+    return (Path(root) if root else default_root()) / f"{prefix}{split}-test.jsonl"
+
+
+def available(
+    split: str = "depth-2", root: Optional[Path] = None, world: str = "cwa"
+) -> bool:
+    return split_path(split, root, world).exists()
 
 
 def parse_representation(representation: str, schema: str = "direct") -> tuple:
@@ -143,52 +150,71 @@ def _triple_to_tuple(
     return atom, positive
 
 
-def _facts_of(record: dict, schema: str) -> set[tuple]:
+def _mark(atom: tuple, positive: bool, world: str) -> tuple:
+    """Apply the negative marker this world uses.
+
+    Under CWA the engine reads ``not_p`` as a separate positive predicate that
+    the perception layer also produces, so the two sides match. Under OWA the
+    corpus means *strong* negation -- a claim that ``p`` is false, which
+    interacts with ``p`` -- and that is written ``-p``.
+    """
+    if positive:
+        return atom
+    prefix = "not_" if world == "cwa" else "-"
+    return (f"{prefix}{atom[0]}",) + atom[1:]
+
+
+def _facts_of(record: dict, schema: str, world: str = "cwa") -> set[tuple]:
     facts: set[tuple] = set()
     for triple in record.get("triples", {}).values():
         atom, positive = parse_representation(triple["representation"], schema)
-        # CWA theories carry no negative facts; if one appears, keep the
-        # polarity explicit rather than silently asserting the positive.
-        facts.add(atom if positive else (f"not_{atom[0]}",) + atom[1:])
+        facts.add(_mark(atom, positive, world))
     return facts
 
 
-def _rules_of(record: dict, schema: str) -> list[tuple]:
+def _rules_of(record: dict, schema: str, world: str = "cwa") -> list[tuple]:
     rules: list[tuple] = []
     for rule in record.get("rules", {}).values():
         triples = _TRIPLE.findall(rule["representation"])
         if len(triples) < 2:
             continue  # a rule needs at least one condition and a conclusion
         parsed = [_triple_to_tuple(*parts, schema=schema) for parts in triples]
-        body = [atom if positive else (f"not_{atom[0]}",) + atom[1:]
-                for atom, positive in parsed[:-1]]
+        body = [_mark(atom, positive, world) for atom, positive in parsed[:-1]]
         head_atom, head_positive = parsed[-1]
-        head = head_atom if head_positive else (f"not_{head_atom[0]}",) + head_atom[1:]
-        rules.append((head, body))
+        rules.append((_mark(head_atom, head_positive, world), body))
     return rules
 
 
-def _questions_of(record: dict, schema: str) -> list[Question]:
+def _questions_of(record: dict, schema: str, world: str = "cwa") -> list[Question]:
     questions: list[Question] = []
     for item in record.get("questions", {}).values():
         try:
             goal, positive = parse_representation(item["representation"], schema)
         except ValueError:
             continue
+        # OWA answers are True, False or the string "Unknown". bool("Unknown")
+        # is True, so the string has to be checked before the cast -- reading
+        # every unknown as a yes would score 46% of the split wrong and look
+        # like a reasoning failure.
+        raw = item["answer"]
+        unknown = isinstance(raw, str) and raw.strip().lower() == "unknown"
         questions.append(
             Question(
                 text=item["question"],
                 goal=goal,
-                answer=bool(item["answer"]),
+                answer=False if unknown else bool(raw),
                 depth=int(item.get("QDep") or 0),
                 negated=not positive,
+                unknown=unknown,
             )
         )
     return questions
 
 
-def iter_records(split: str, root: Optional[Path] = None) -> Iterator[dict]:
-    path = split_path(split, root)
+def iter_records(
+    split: str, root: Optional[Path] = None, world: str = "cwa"
+) -> Iterator[dict]:
+    path = split_path(split, root, world)
     if not path.exists():
         raise FileNotFoundError(
             f"{path} is missing. Fetch the corpus with "
@@ -207,6 +233,7 @@ def load(
     limit: Optional[int] = None,
     questions_per_problem: Optional[int] = None,
     schema: str = "direct",
+    world: str = "cwa",
 ) -> list[Problem]:
     """Load a split as :class:`~neuralmind.datasets.proofwriter.Problem` objects.
 
@@ -217,9 +244,11 @@ def load(
         raise ValueError(f"unknown split {split!r}; choose from {', '.join(SPLITS)}")
     if schema not in SCHEMAS:
         raise ValueError(f"unknown schema {schema!r}; choose from {', '.join(SCHEMAS)}")
+    if world not in WORLDS:
+        raise ValueError(f"unknown world {world!r}; choose from {', '.join(WORLDS)}")
     problems: list[Problem] = []
-    for record in iter_records(split, root):
-        questions = _questions_of(record, schema)
+    for record in iter_records(split, root, world):
+        questions = _questions_of(record, schema, world)
         if questions_per_problem is not None:
             questions = questions[:questions_per_problem]
         if not questions:
@@ -228,9 +257,10 @@ def load(
             Problem(
                 theory=record["theory"],
                 questions=questions,
-                gold_facts=_facts_of(record, schema),
-                gold_rules=_rules_of(record, schema),
+                gold_facts=_facts_of(record, schema, world),
+                gold_rules=_rules_of(record, schema, world),
                 seed=record.get("id"),
+                world=world,
             )
         )
         if limit is not None and len(problems) >= limit:

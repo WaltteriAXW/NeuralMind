@@ -51,6 +51,8 @@ from .inference.engine import Answer, ReasoningEngine
 from .inference.model import Model
 from .inference.proof import ProofNode, explain
 from .knowledge.base import FactRecord, KnowledgeBase
+from .mind import Mind, Observation
+from .output.brief import Brief, brief
 from .output.nlg import Realiser
 from .output.render import render_model, render_proof
 from .output.serialize import to_json
@@ -73,6 +75,8 @@ def __getattr__(name: str):
 __all__ = [
     "__version__",
     # pipeline
+    "Mind",
+    "Observation",
     "NeuralMindPipeline",
     "PipelineResult",
     # knowledge
@@ -112,6 +116,8 @@ __all__ = [
     # perception and output
     "Perception",
     "Realiser",
+    "Brief",
+    "brief",
     "render_proof",
     "render_model",
     "to_json",

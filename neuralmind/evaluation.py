@@ -43,8 +43,11 @@ class QuestionOutcome:
 
     problem: int
     question: str
-    expected: bool
-    predicted: bool
+    #: ``yes`` / ``no`` / ``unknown``. Strings rather than booleans because
+    #: the open-world splits have a third answer, and a benchmark that cannot
+    #: express "the theory does not say" cannot grade one.
+    expected: str
+    predicted: str
     depth: int
     failure: Optional[str] = None
     detail: str = ""
@@ -179,6 +182,11 @@ def evaluate(
         if not theory_matches:
             report.theory_mismatches += 1
 
+        open_world = problem.world == "owa"
+        # An open-world theory is by definition not a complete description, so
+        # silence means "unknown" for every predicate -- including the ones it
+        # never mentions, which is most of what the Unknown questions ask about.
+        kb.rules.open_world = open_world
         try:
             engine = kb.engine()
             engine.solve()
@@ -188,8 +196,8 @@ def evaluate(
                     QuestionOutcome(
                         problem=index,
                         question=question.text,
-                        expected=question.answer,
-                        predicted=False,
+                        expected=question.status,
+                        predicted="unknown" if open_world else "no",
                         depth=question.depth,
                         failure=PERCEPTION,
                         detail=f"extracted theory did not compile: {exc}",
@@ -201,19 +209,31 @@ def evaluate(
         for question in problem.questions:
             goal_atom = _goal_atom(question.goal)
             asked, asked_negated, detail = _read_query(perceptor, question.text)
-            question_matches = asked == goal_atom and asked_negated == question.negated
-            derived = bool(asked is not None and engine.model.holds(asked))
-            # A negative question ("The mouse is not blue.") is true exactly
-            # when the goal is not derivable. The *perceived* polarity is used
-            # here, not the gold one: misreading the polarity is a real
-            # end-to-end failure and must show up as one.
-            predicted = (not derived) if asked_negated else derived
+            question_matches = (
+                asked == (goal_atom.complement() if open_world and question.negated
+                          else goal_atom)
+                and asked_negated == question.negated
+            )
+            if open_world:
+                predicted = _open_world_status(engine, asked)
+                expected = question.status
+                gold_predicted = _closure_status(gold_engine, goal_atom, question.negated)
+            else:
+                derived = bool(asked is not None and engine.model.holds(asked))
+                # A negative question ("The mouse is not blue.") is true exactly
+                # when the goal is not derivable. The *perceived* polarity is
+                # used here, not the gold one: misreading the polarity is a real
+                # end-to-end failure and must show up as one.
+                predicted = _yes_no((not derived) if asked_negated else derived)
+                expected = question.status
+                gold_derived = gold_engine.holds(goal_atom)
+                gold_predicted = _yes_no(
+                    (not gold_derived) if question.negated else gold_derived
+                )
 
             failure: Optional[str] = None
-            if predicted != question.answer:
-                gold_derived = gold_engine.holds(goal_atom)
-                gold_predicted = (not gold_derived) if question.negated else gold_derived
-                if gold_predicted != question.answer:
+            if predicted != expected:
+                if gold_predicted != expected:
                     failure = ENGINE
                     detail = detail or "engine disagrees with the gold closure"
                 elif not theory_matches or not question_matches:
@@ -228,7 +248,7 @@ def evaluate(
                 QuestionOutcome(
                     problem=index,
                     question=question.text,
-                    expected=question.answer,
+                    expected=expected,
                     predicted=predicted,
                     depth=question.depth,
                     failure=failure,
@@ -241,6 +261,32 @@ def evaluate(
 
 
 # -- gold-theory helpers --------------------------------------------------
+
+
+def _yes_no(derived: bool) -> str:
+    return "yes" if derived else "no"
+
+
+def _open_world_status(engine, asked: Optional[Atom]) -> str:
+    """The three-valued answer, or ``unknown`` for a question nothing could read."""
+    if asked is None:
+        return "unknown"
+    return engine.ask(asked, explain_answer=False).status
+
+
+def _closure_status(closure, goal: Atom, negated: bool) -> str:
+    """The same judgement made against the gold closure, with no engine involved.
+
+    The question asserts ``goal`` or its strong negation. It is answered by
+    whichever polarity the closure contains, and ``unknown`` when it contains
+    neither -- the whole point of the open-world splits.
+    """
+    asserted = goal.complement() if negated else goal
+    if closure.holds(asserted):
+        return "yes"
+    if closure.holds(asserted.complement()):
+        return "no"
+    return "unknown"
 
 
 def _goal_atom(goal: tuple) -> Atom:
@@ -258,6 +304,7 @@ def _read_query(perceptor, text: str) -> tuple[Optional[Atom], bool, str]:
     Returns ``(goal atom, negated, detail)``.
     """
     stripped = text.strip()
+    strong = getattr(getattr(perceptor, "schema", None), "strong", False)
     if stripped.endswith("?"):
         parser = getattr(perceptor, "parse_question", None)
         if parser is not None:
@@ -273,6 +320,11 @@ def _read_query(perceptor, text: str) -> tuple[Optional[Atom], bool, str]:
             f"statement produced {len(perception.facts)} facts, expected exactly one",
         )
     atom = perception.facts[0].atom
+    if strong:
+        # Under strong negation the negative *is* the goal: "The rabbit is not
+        # green" asks whether -green(rabbit) is derivable, which the engine
+        # answers directly. There is nothing to strip.
+        return atom, atom.is_negated, ""
     if atom.predicate.startswith("not_"):
         return Atom(atom.predicate[4:], atom.args), True, ""
     return atom, False, ""
@@ -292,7 +344,13 @@ def _gold_engine(problem: Problem):
 
 
 def _template_atom(literal: tuple) -> Atom:
-    """Build an atom from a gold template, stripping any negation marker."""
+    """Build an atom from a gold template, stripping a *failure* negation marker.
+
+    ``not_p`` is closed-world negation, which becomes a negated literal, so the
+    marker is dropped here and re-applied by :func:`_template_literal`. ``-p``
+    is strong negation and is a predicate in its own right -- it is derived,
+    matched and queried like any other -- so it is kept.
+    """
     predicate = literal[0]
     if predicate.startswith("not_"):
         predicate = predicate[4:]
