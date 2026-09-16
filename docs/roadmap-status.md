@@ -110,4 +110,9 @@ knowing the domain.
   chainer is not a Datalog engine for millions of facts — that is what Soufflé
   is for.
 - **Open-domain language.** Stated plainly in the README. The controlled grammar
-  covers a register, not English.
+  covers a register, not English; the narrative reader covers a second register
+  approximately, and `prefer="auto"` picks between them per input. Together
+  they take ProofWriter's crowdsourced split from 52% to 70%, which is
+  progress and is not a solution. The remaining errors are genuine paraphrase
+  problems — idioms read as attributes, world knowledge the text assumes — and
+  no amount of further dependency-pattern work reaches them.

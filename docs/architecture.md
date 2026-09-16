@@ -12,24 +12,43 @@ raw input ─→ perception ─→ knowledge base ─→ inference ─→ Type 5
 The only place anything is learned. Its output is always
 `FactRecord(atom, confidence, provenance, evidence)` — never a conclusion.
 
-**Text.** Two extractors, used for different jobs rather than as fallbacks.
+**Text.** Three extractors, used for different jobs rather than as fallbacks.
 `ControlledEnglishParser` handles sentences that state *rules*, because a
 dependency parse does not tell you a sentence is an implication — the grammar
 does. `SpacyTripleExtractor` handles sentences that state *facts*, where the
 parse copes with modifiers, prepositions, conjunctions and passives.
-`TextPerceptor` routes between them and works without spaCy installed.
+`NarrativeExtractor` handles free-form prose, where the distinction between a
+rule and a fact is itself a question about the sentence's structure:
 
-Both run verbs through `base_verb()` so the grammar's `purrs` and spaCy's
-lemmatised `purr` land on the same predicate. Without that the two paths
-produce facts that never unify — a bug this project shipped briefly and now has
-a regression test for.
+> Charlie is green, but often kind, even when he is blue and cold.
+
+Four facts in one sentence, a pronoun standing in for the subject, and an "even
+when" that looks like a conditional and is not. The controlled grammar refuses
+this outright. The narrative reader splits the sentence into spans and collects
+every predicative adjective in each, resolves pronouns to the previous
+sentence's subject, and decides *per sentence* whether a marker conditions
+(opening the sentence, or before a "then") or merely modifies.
+
+`TextPerceptor` routes between them and works without spaCy installed. With
+`prefer="auto"` the routing is decided per input by the grammar's own refusal:
+if it reads every sentence it is exact and wins; if it refuses any, the text is
+outside its register and the narrative reader takes the whole passage. That
+rule exists because the two readers are near-opposites on the ProofWriter
+corpus — neither is better everywhere — so choosing once, up front, would give
+up one or the other.
+
+All three run verbs through `base_verb()` so the grammar's `purrs` and spaCy's
+lemmatised `purr` land on the same predicate. Without that the paths produce
+facts that never unify — a bug this project shipped briefly and now has a
+regression test for.
 
 **Confidences mean different things by source, and the code says which.** A
 spaCy-derived fact carries a *structural reliability weight*: an SVO triple read
 straight off the parse (0.90) is more trustworthy than one recovered through a
-preposition (0.75). These are an ordering, not calibrated probabilities. A CNN
-digit fact carries an actual softmax probability. Only the second is a
-probability, and only the second should be treated as one.
+preposition (0.75), and anything the narrative reader guesses at sits below
+both (0.70). These are an ordering, not calibrated probabilities. A CNN digit
+fact carries an actual softmax probability. Only the second is a probability,
+and only the second should be treated as one.
 
 **Vision.** `perception/nn.py` is a ~13k-parameter CNN in NumPy — conv/pool/
 dense with im2col, Adam, and a finite-difference gradient check in the tests.

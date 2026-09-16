@@ -270,7 +270,19 @@ class TextPerceptor:
     and falling back only where it refuses keeps that from happening, without
     giving up the coverage spaCy provides outside the controlled register.
 
-    Pass ``prefer="spacy"`` to reverse it.
+    Outside that register neither reader is enough, and the default
+    ``prefer="auto"`` picks between the grammar and
+    :class:`~neuralmind.perception.narrative.NarrativeExtractor` per input --
+    see :meth:`_choose_reader`. The four strategies:
+
+    ``auto``
+        Choose per input. Falls back to ``grammar`` with no spaCy installed.
+    ``grammar``
+        The controlled grammar, with spaCy for the facts it declines.
+    ``spacy``
+        The same, with the two reversed.
+    ``narrative``
+        The free-text reader for everything. Requires spaCy.
     """
 
     name = "text"
@@ -280,20 +292,46 @@ class TextPerceptor:
         schema: Optional[TripleSchema] = None,
         model: str = "en_core_web_sm",
         use_spacy: bool = True,
-        prefer: str = "grammar",
+        prefer: str = "auto",
     ) -> None:
-        if prefer not in ("grammar", "spacy"):
-            raise ValueError(f"prefer must be 'grammar' or 'spacy', not {prefer!r}")
+        if prefer not in ("auto", "grammar", "spacy", "narrative"):
+            raise ValueError(
+                "prefer must be 'auto', 'grammar', 'spacy' or 'narrative', "
+                f"not {prefer!r}"
+            )
         self.schema = schema or TripleSchema()
         self.controlled = ControlledEnglishParser(self.schema)
         self.use_spacy = use_spacy and spacy_available(model)
         self.prefer = prefer
         self.spacy = SpacyTripleExtractor(model, self.schema) if self.use_spacy else None
+        self.narrative = None
+        if prefer in ("narrative", "auto") and self.use_spacy:
+            from .narrative import NarrativeExtractor
+
+            self.narrative = NarrativeExtractor(model, self.schema)
+        if prefer == "narrative":
+            if not self.use_spacy:
+                raise PerceptionError(
+                    "prefer='narrative' needs spaCy: the free-text reader works "
+                    "from a dependency parse. Install it with "
+                    "`python -m spacy download en_core_web_sm`."
+                )
 
     def perceive(self, raw: str) -> Perception:
         combined = Perception(source=f"text:{self.name}")
         combined.diagnostics["spacy"] = self.use_spacy
         combined.diagnostics["prefer"] = self.prefer
+        mode = self.prefer
+        if mode == "auto":
+            mode = self._choose_reader(raw)
+            combined.diagnostics["chose"] = mode
+        if mode == "narrative" and self.narrative is not None:
+            # Free-form prose: the grammar cannot split rules from facts here,
+            # because whether a sentence states a rule is itself a question
+            # about its structure. The narrative reader decides per sentence.
+            combined.extend(self.narrative.perceive(raw))
+            combined.diagnostics["unparsed"] = len(combined.unparsed)
+            return combined
         rule_sentences: list[str] = []
         fact_sentences: list[str] = []
         for sentence in split_sentences(raw):
@@ -313,6 +351,26 @@ class TextPerceptor:
         combined.diagnostics["fact_sentences"] = len(fact_sentences)
         combined.diagnostics["unparsed"] = len(combined.unparsed)
         return combined
+
+    def _choose_reader(self, raw: str) -> str:
+        """Pick the exact reader where it applies, the approximate one elsewhere.
+
+        The controlled grammar refuses what it cannot read, and that refusal is
+        the signal. If it reads every sentence, it is exact and the narrative
+        reader would only add noise; if it refuses any, the text is outside its
+        register and the narrative reader does better on the whole passage.
+
+        Measured on the ProofWriter corpus, the two readers are near-opposites
+        -- neither is better everywhere -- which is why this is chosen per
+        input rather than configured once.
+        """
+        if self.narrative is None:
+            return "grammar"
+        try:
+            attempt = self.controlled.perceive(raw)
+        except Exception:
+            return "narrative"
+        return "grammar" if not attempt.unparsed else "narrative"
 
     def _read_facts(self, sentences: Sequence[str], first, second) -> Perception:
         """Read each sentence with ``first``, handing the rest to ``second``.
