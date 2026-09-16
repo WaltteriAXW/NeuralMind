@@ -122,10 +122,17 @@ class ControlledEnglishParser:
 
     name = "controlled-english"
 
-    def __init__(self, schema: Optional[TripleSchema] = None, confidence: float = 1.0) -> None:
+    def __init__(
+        self,
+        schema: Optional[TripleSchema] = None,
+        confidence: float = 1.0,
+        unanchored_confidence: float = 0.5,
+    ) -> None:
         self.schema = schema or TripleSchema()
         #: Rule-based extraction is deterministic, so the default is certainty.
         self.confidence = confidence
+        #: Multiplier for a reading with no copula or determiner to anchor it.
+        self.unanchored_confidence = unanchored_confidence
         self._bare_mentions: set[str] = set()
         self._determined_mentions: set[str] = set()
 
@@ -177,6 +184,22 @@ class ControlledEnglishParser:
 
     # -- sentence dispatch ------------------------------------------------
 
+    def _anchor_confidence(self, sentence: str) -> float:
+        """How much to trust a reading of this sentence.
+
+        The grammar locates the verb using two cues: a copula, or the
+        determiner that introduces the object. A sentence with neither gives
+        it nothing to work from, so it falls back to "the second word is the
+        verb" -- which is right for "Alice likes Bob" and nonsense for
+        "wibble wobble". Both are still read, because refusing outright would
+        lose real sentences, but the unanchored ones are marked so a caller can
+        filter them and a person can see the guess for what it is.
+        """
+        words = {token.lower() for token in tokenize(sentence)}
+        if words & COPULAS or words & DETERMINERS:
+            return self.confidence
+        return self.confidence * self.unanchored_confidence
+
     def _parse_sentence(self, sentence: str, perception: Perception) -> None:
         text = sentence.strip().rstrip(".!")
         lowered = text.lower()
@@ -194,6 +217,7 @@ class ControlledEnglishParser:
         if not clauses:
             raise _ParseFailure("no clause recognised")
         bindings: dict[str, Term] = {}
+        confidence = self._anchor_confidence(text)
         for clause in clauses:
             atom = self._to_atom(clause, bindings)
             if not atom.is_ground:
@@ -204,7 +228,7 @@ class ControlledEnglishParser:
             perception.facts.append(
                 FactRecord(
                     atom=atom,
-                    confidence=self.confidence,
+                    confidence=confidence,
                     provenance=f"perception:{self.name}",
                     evidence=sentence.strip(),
                 )

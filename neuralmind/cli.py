@@ -1,5 +1,6 @@
 """Command-line interface.
 
+    neuralmind shell    interactive session: state facts, ask questions
     neuralmind ask      query a knowledge base, with a proof
     neuralmind read     turn English into facts and rules
     neuralmind check    report integrity-constraint violations
@@ -300,6 +301,19 @@ def _atoms_from_file(path: Path) -> list[str]:
     ]
 
 
+def cmd_shell(args) -> int:
+    from .shell import Shell
+
+    kb = _build_kb(args.rules, args.fact, args.facts_file)
+    shell = Shell(
+        knowledge=kb,
+        schema_style=args.schema,
+        show_proof=not args.no_proof,
+        show_prose=args.prose,
+    )
+    return shell.run(banner=not args.quiet)
+
+
 def cmd_demo(args) -> int:
     from . import demos
 
@@ -387,6 +401,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="maximum candidate clauses to test")
     induce.add_argument("--json", action="store_true")
     induce.set_defaults(func=cmd_induce)
+
+    shell = sub.add_parser("shell", help="interactive session: state facts, ask questions")
+    _add_kb_arguments(shell)
+    shell.add_argument("--schema", choices=("triple", "direct"), default="triple",
+                       help="how English maps onto predicates")
+    shell.add_argument("--no-proof", action="store_true", help="answers without derivations")
+    shell.add_argument("--prose", action="store_true", help="add an English rendering")
+    shell.add_argument("--quiet", action="store_true", help="skip the banner")
+    shell.set_defaults(func=cmd_shell)
 
     demo = sub.add_parser("demo", help="run a roadmap phase end to end")
     demo.add_argument(

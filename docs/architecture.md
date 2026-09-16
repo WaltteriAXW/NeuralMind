@@ -200,6 +200,27 @@ author:
   incomplete positive list the correct rule derives an unlisted one and is
   rejected for it. The CLI says so when a closed-world run finds nothing.
 
+## The session shell (`neuralmind/shell.py`)
+
+`Shell.handle(line) -> str` is a pure function from an input line to the text
+to print; `run()` is a thin loop around it. That split is why the shell has 34
+tests and none of them need a terminal, and why a session can be scripted from
+Python as easily as typed.
+
+Input is dispatched four ways -- a leading `:` is a command, a trailing `?` is
+a question, logic syntax is read as ASP, everything else goes to the perception
+layer -- and both readings are tried before anything is refused.
+
+Two behaviours matter more than the convenience:
+
+* **Nothing is absorbed silently.** Every assertion echoes the symbols it
+  produced. A sentence the grammar cannot read is reported; one it can only
+  guess at is marked as a guess, with the confidence the perception layer
+  assigned it.
+* **An assertion that would break the knowledge base is rolled back.** Without
+  this, a single unsafe rule makes every later command fail and `:clear` --
+  which discards the whole session -- is the only way out.
+
 ## Design decisions worth knowing
 
 **Why a hand-written engine when clingo exists.** Proof trees. clingo gives

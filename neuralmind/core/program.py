@@ -59,10 +59,11 @@ class Rule:
     label: Optional[str] = None
 
     def __str__(self) -> str:
-        head = str(self.head) if self.head is not None else ""
         if not self.body:
-            return f"{head}."
-        return f"{head} :- {format_body(self.body)}."
+            return f"{self.head}."
+        if self.head is None:
+            return f":- {format_body(self.body)}."
+        return f"{self.head} :- {format_body(self.body)}."
 
     @property
     def is_fact(self) -> bool:

@@ -35,6 +35,57 @@ The tree is not a rendering of the answer — it is the record of the rule
 instances that fired. It cannot disagree with the conclusion it explains, which
 is the one guarantee a generated explanation can never offer.
 
+## Talk to it
+
+`neuralmind shell` is an interactive session — a REPL, not a chat interface,
+and the difference is the point. Nothing generates language. You state things,
+it shows you exactly which symbols it took; you ask, it answers with the
+derivation.
+
+```console
+$ neuralmind shell
+> :load triples
+  loaded triples.lp: 4 rule(s), 0 fact(s) total
+> Bob is a cat.
+  + isa(bob, cat)
+> All cats are mammals.
+  + isa(X, mammal) :- isa(X, cat).
+> If something is a mammal then it is warm blooded.
+  + attr(X, warm_blooded) :- isa(X, mammal).
+> Is Bob warm blooded?
+yes
+  attr(bob, warm_blooded)  (by If something is a mammal then it is warm blooded)
+  └── isa(bob, mammal)  (by All cats are mammals)
+      └── isa(bob, cat)  [given]
+> Is Bob a fish?
+no
+  isa(bob, fish) is false: no rule in the knowledge base has a head matching
+  it, and it was not given as a fact.
+> Bob is not warm blooded.
+  + not_attr(bob, warm_blooded)
+  ! Contradictory attribute violated by: attr(bob, warm_blooded), not_attr(bob, warm_blooded)
+```
+
+The contradiction is caught the moment it is stated, and `:check` traces *why*
+the conflicting conclusion held — back through both rules to the one fact it
+rests on. Three behaviours worth noting, because each is something a
+language-model interface cannot do:
+
+- **It refuses rather than absorbing.** A sentence outside the grammar is
+  reported, and one it can only guess at — "wibble wobble" has no determiner or
+  copula to locate a verb — is marked `[confidence 0.50 … this is a guess]`
+  rather than quietly entering the knowledge base.
+- **A bad rule is rejected, not accepted.** Type an unsafe or unstratifiable
+  rule and it is rolled back with the reason, so one mistake cannot wedge the
+  session.
+- **"No" is explained.** A false question reports which rules could have
+  derived it and where each one ran out of support.
+
+Logic works too — `parent(alice, bob).` to assert, `ancestor(alice, X)?` to
+solve for X — as do `:why`, `:facts`, `:rules`, `:model`, `:retract`, `:save`,
+and `:learn <target> from <predicates>`, which induces a rule from what the
+session already knows. `:help` lists them.
+
 ## Install
 
 ```bash
@@ -80,6 +131,7 @@ print(engine.cross_check().report())   # re-derived with clingo, atom for atom
 Each runs one phase of the roadmap end to end and prints its milestone:
 
 ```bash
+neuralmind shell         # interactive session (see above)
 neuralmind demo family   # Phase 2: hand-written rules, no neural layer
 neuralmind demo text     # Phase 3: English → facts and rules → proof
 neuralmind demo mnist    # Phase 1: a CNN reads two digits, the logic adds them

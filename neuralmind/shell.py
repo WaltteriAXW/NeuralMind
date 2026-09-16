@@ -1,0 +1,595 @@
+"""An interactive session for building and questioning a knowledge base.
+
+This is a REPL, not a chat interface, and the difference is the whole point.
+Nothing here generates language. You state facts and rules, it tells you
+exactly what symbols it took from them; you ask a question, it answers and
+shows the derivation. A sentence it cannot read is reported, and one it can
+only guess at is marked as a guess -- neither is quietly absorbed. That is the
+behaviour a language model cannot offer, and the reason this project exists.
+
+    $ neuralmind shell
+    > Bob is a cat.
+      + isa(bob, cat)
+    > All cats are mammals.
+      + isa(X, mammal) :- isa(X, cat).
+    > Is Bob a mammal?
+    yes
+      isa(bob, mammal)  (by All cats are mammals)
+      └── isa(bob, cat)  [given]
+
+Input is dispatched four ways: a line starting with ``:`` is a command,
+a line ending with ``?`` is a question, anything with logic syntax is read as
+ASP, and everything else goes to the perception layer as English. Both
+readings are tried before anything is rejected.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Iterable, Optional, TextIO
+
+from .core.parser import ParseError, parse_atom, parse_program
+from .core.program import ProgramError
+from .core.terms import Atom, Const
+from .inference.proof import ProofError, explain
+from .knowledge.base import KnowledgeBase, builtin_rulesets, rule_path
+from .output.nlg import Realiser
+from .output.render import render_model, render_proof
+
+__all__ = ["Shell", "run_shell"]
+
+BANNER = """NeuralMind interactive session.
+State facts and rules in English or in logic; ask questions with '?'.
+No language model is involved: every answer comes with its derivation.
+Type :help for commands, :quit to leave."""
+
+HELP = """
+  Statements        Bob is a cat.            English, read into symbols
+                    parent(alice, bob).      logic, asserted directly
+                    All cats are mammals.    a rule
+  Questions         Is Bob a mammal?         English
+                    ancestor(alice, X)?      logic, solves for X
+
+  :help                  this text
+  :facts [predicate]     what has been asserted
+  :rules                 the rules in force
+  :model [predicate]     everything derivable
+  :why <atom>            the derivation of one atom
+  :check                 integrity-constraint violations
+  :load <name|path>      add a bundled rule set (or a .lp file)
+  :sets                  list the bundled rule sets
+  :retract <atom>        remove an asserted fact
+  :learn <target/arity> from <pred/arity> ...
+                         induce a rule for the target from what is known
+  :schema [direct|triple]  how English maps onto predicates
+  :proof on|off          show derivations with answers
+  :prose on|off          add an English rendering of the answer
+  :save <path>           write the session's knowledge base as ASP
+  :clear                 forget everything
+  :quit
+""".rstrip()
+
+_LOGIC_CALL = re.compile(r"^[a-z_][A-Za-z0-9_]*\s*\(.*\)\s*\.?\??$", re.DOTALL)
+
+
+@dataclass
+class Shell:
+    """The session state and the one function that advances it.
+
+    :meth:`handle` takes a line and returns what should be printed. It has no
+    side effects beyond the session itself, which is what makes the shell
+    testable without a terminal.
+    """
+
+    knowledge: KnowledgeBase = field(default_factory=lambda: KnowledgeBase("session"))
+    schema_style: str = "triple"
+    show_proof: bool = True
+    show_prose: bool = False
+    running: bool = True
+    transcript: list[str] = field(default_factory=list)
+    _perceptor: object = None
+    _engine: object = None
+    _realiser: Realiser = field(default_factory=Realiser)
+    _reported_violations: set = field(default_factory=set)
+
+    # -- lazily built parts -------------------------------------------------
+
+    @property
+    def perceptor(self):
+        if self._perceptor is None:
+            from .perception.controlled import TripleSchema
+            from .perception.text import TextPerceptor
+
+            self._perceptor = TextPerceptor(schema=TripleSchema(self.schema_style))
+        return self._perceptor
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            self._engine = self.knowledge.engine()
+        return self._engine
+
+    def _invalidate(self) -> None:
+        self._engine = None
+
+    def _reversible(self):
+        """Context manager that can undo an assertion that breaks the session.
+
+        A single unsafe or unstratifiable rule would otherwise wedge the whole
+        knowledge base: every later command fails and the only way out is
+        ``:clear``, which throws away the work. Anything that does not compile
+        is rolled back and reported instead.
+        """
+        return _Reversible(self)
+
+    # -- dispatch -----------------------------------------------------------
+
+    def handle(self, line: str) -> str:
+        """Process one line of input and return the response."""
+        text = line.strip()
+        if not text or text.startswith("%") or text.startswith("#"):
+            return ""
+        if text.startswith(":"):
+            return self._command(text[1:].strip())
+        try:
+            if text.endswith("?"):
+                return self._question(text)
+            return self._assert(text)
+        except ProgramError as exc:
+            return f"! {exc}"
+        except Exception as exc:  # pragma: no cover - last-resort guard
+            return f"! {type(exc).__name__}: {exc}"
+
+    # -- assertions ---------------------------------------------------------
+
+    def _assert(self, text: str) -> str:
+        logic_first = _looks_like_logic(text)
+        attempts = (
+            (self._assert_logic, self._assert_english)
+            if logic_first
+            else (self._assert_english, self._assert_logic)
+        )
+        problems = []
+        for attempt in attempts:
+            result = attempt(text)
+            if result is not None:
+                return result
+            problems.append(attempt)
+        return (
+            "? I could not read that as English or as logic.\n"
+            "  English I understand looks like 'Bob is a cat.', "
+            "'The cat chases the mouse.',\n"
+            "  'All cats are mammals.' or 'If something is a cat then it purrs.'"
+        )
+
+    def _assert_logic(self, text: str) -> Optional[str]:
+        if not text.endswith("."):
+            text += "."
+        try:
+            program = parse_program(text, "session", check=False)
+        except (ParseError, ValueError):
+            return None
+        if not program.rules:
+            return None
+        with self._reversible() as undo:
+            added = []
+            for rule in program.rules:
+                if rule.is_fact and rule.head is not None and rule.head.is_ground:
+                    self.knowledge.add_fact(rule.head, provenance="session")
+                    added.append(str(rule.head))
+                else:
+                    self.knowledge.rules.add(rule)
+                    added.append(str(rule))
+            self._invalidate()
+            rejected = undo.validate()
+            if rejected:
+                return rejected
+        self.transcript.append(text)
+        return self._added(added)
+
+    def _assert_english(self, text: str) -> Optional[str]:
+        perception = self.perceptor.perceive(text)
+        if not perception.facts and not perception.rules:
+            return None
+        with self._reversible() as undo:
+            perception.into(self.knowledge)
+            self._invalidate()
+            rejected = undo.validate()
+            if rejected:
+                return rejected
+        self._realiser.learn_names(perception.diagnostics.get("proper_names", ()))
+        self.transcript.append(f"% {text}")
+        added = []
+        for record in perception.facts:
+            label = str(record.atom)
+            if record.confidence < 1.0:
+                label += (
+                    f"   [confidence {record.confidence:.2f} -- no determiner or "
+                    "copula to anchor the reading, so this is a guess]"
+                )
+            added.append(label)
+            self.transcript.append(f"{record.atom}.")
+        for rule in perception.rules:
+            added.append(str(rule))
+            self.transcript.append(str(rule))
+        note = ""
+        if perception.unparsed:
+            note = "\n? not understood: " + "; ".join(
+                fragment.split("  (")[0] for fragment in perception.unparsed
+            )
+        return self._added(added) + note
+
+    def _added(self, items: Iterable[str]) -> str:
+        lines = [f"  + {item}" for item in items]
+        warning = self._new_violations()
+        if warning:
+            lines.append(warning)
+        return "\n".join(lines) if lines else "  (nothing new)"
+
+    def _new_violations(self) -> str:
+        """Report any constraint broken since the last assertion."""
+        try:
+            violations = self.engine.violations
+        except ProgramError as exc:
+            return f"  ! the knowledge base no longer compiles: {exc}"
+        fresh = [v for v in violations if v.describe() not in self._reported_violations]
+        for violation in fresh:
+            self._reported_violations.add(violation.describe())
+        if not fresh:
+            return ""
+        return "\n".join(f"  ! {v.describe()}" for v in fresh)
+
+    # -- questions ----------------------------------------------------------
+
+    def _question(self, text: str) -> str:
+        body = text.rstrip("?").strip()
+        goal: Optional[Atom] = None
+        if _looks_like_logic(body):
+            try:
+                goal = parse_atom(body)
+            except (ParseError, ValueError):
+                goal = None
+        if goal is None:
+            try:
+                goal = self.perceptor.parse_question(text)
+            except Exception:
+                goal = None
+        if goal is None:
+            return (
+                "? I could not read that question.\n"
+                "  Try 'Is Bob a mammal?', 'Does the cat chase the mouse?' "
+                "or a logic goal like 'ancestor(alice, X)?'"
+            )
+
+        try:
+            answer = self.engine.ask(goal)
+        except ProgramError as exc:
+            return f"! {exc}"
+
+        if not answer.holds:
+            lines = ["no"]
+            if answer.diagnosis is not None:
+                lines.append(_indent(answer.diagnosis.describe()))
+            return "\n".join(lines)
+
+        lines = ["yes"]
+        bound = [b for b in answer.bindings if b]
+        if bound:
+            for atom, binding in zip(answer.atoms, answer.bindings):
+                if binding:
+                    values = ", ".join(
+                        f"{name} = {value.value if isinstance(value, Const) else value}"
+                        for name, value in sorted(binding.items())
+                    )
+                    lines.append(f"  {values}    ({atom})")
+        if self.show_proof and answer.proof is not None:
+            lines.append(_indent(render_proof(answer.proof)))
+        if self.show_prose:
+            lines.append(_indent(self._realiser.realise_answer(answer)))
+        return "\n".join(lines)
+
+    # -- commands -----------------------------------------------------------
+
+    def _command(self, text: str) -> str:
+        name, _, argument = text.partition(" ")
+        argument = argument.strip()
+        handler = _COMMANDS.get(name.lower())
+        if handler is None:
+            return f"? unknown command :{name} -- try :help"
+        return handler(self, argument)
+
+    def cmd_help(self, argument: str) -> str:
+        return HELP
+
+    def cmd_quit(self, argument: str) -> str:
+        self.running = False
+        return "bye"
+
+    def cmd_facts(self, argument: str) -> str:
+        records = self.knowledge.facts
+        if argument:
+            records = [r for r in records if r.atom.predicate == argument]
+        if not records:
+            return "  (no facts)"
+        lines = []
+        for record in records:
+            line = f"  {record.atom}"
+            if record.confidence < 1.0:
+                line += f"   [confidence {record.confidence:.2f}]"
+            lines.append(line)
+        return "\n".join(lines)
+
+    def cmd_rules(self, argument: str) -> str:
+        rules = self.knowledge.rules
+        parts = [str(r) for r in rules.derivation_rules] + [
+            str(r) for r in rules.constraints
+        ]
+        return "\n".join(f"  {p}" for p in parts) if parts else "  (no rules)"
+
+    def cmd_sets(self, argument: str) -> str:
+        return "  " + ", ".join(builtin_rulesets())
+
+    def cmd_model(self, argument: str) -> str:
+        try:
+            model = self.engine.solve()
+        except ProgramError as exc:
+            return f"! {exc}"
+        return _indent(render_model(model, [argument] if argument else None))
+
+    def cmd_why(self, argument: str) -> str:
+        if not argument:
+            return "? :why needs an atom, e.g. ':why isa(bob, mammal)'"
+        try:
+            atom = parse_atom(argument.rstrip("."))
+        except (ParseError, ValueError) as exc:
+            return f"? {exc}"
+        try:
+            return _indent(render_proof(explain(self.engine.solve(), atom)))
+        except ProofError as exc:
+            return f"  {exc}"
+        except ProgramError as exc:
+            return f"! {exc}"
+
+    def cmd_check(self, argument: str) -> str:
+        try:
+            violations = self.engine.violations
+        except ProgramError as exc:
+            return f"! {exc}"
+        if not violations:
+            return "  no violations: every hard rule holds"
+        lines = []
+        for violation, proof in zip(violations, self.engine.explain_violations()):
+            lines.append(f"  ! {violation.describe()}")
+            lines.append(_indent(render_proof(proof), "    "))
+        return "\n".join(lines)
+
+    def cmd_load(self, argument: str) -> str:
+        if not argument:
+            return f"? :load needs a name or path. Available: {', '.join(builtin_rulesets())}"
+        path = Path(argument)
+        try:
+            source = path if path.exists() else rule_path(argument)
+            before = len(self.knowledge.rules.rules)
+            self.knowledge.load_rules(source)
+        except (FileNotFoundError, ProgramError, ParseError) as exc:
+            return f"? {exc}"
+        self._invalidate()
+        added = len(self.knowledge.rules.rules) - before
+        return f"  loaded {source.name}: {added} rule(s), {len(self.knowledge)} fact(s) total"
+
+    def cmd_retract(self, argument: str) -> str:
+        if not argument:
+            return "? :retract needs an atom"
+        try:
+            atom = parse_atom(argument.rstrip("."))
+        except (ParseError, ValueError) as exc:
+            return f"? {exc}"
+        if self.knowledge.remove_fact(atom):
+            self._invalidate()
+            self._reported_violations.clear()
+            return f"  - {atom}"
+        return f"  {atom} was not asserted"
+
+    def cmd_clear(self, argument: str) -> str:
+        self.knowledge = KnowledgeBase("session")
+        self.transcript.clear()
+        self._reported_violations.clear()
+        self._invalidate()
+        return "  forgotten"
+
+    def cmd_save(self, argument: str) -> str:
+        if not argument:
+            return "? :save needs a path"
+        target = Path(argument)
+        try:
+            target.write_text(self.knowledge.to_asp() + "\n", encoding="utf-8")
+        except OSError as exc:
+            return f"? {exc}"
+        return f"  wrote {target}"
+
+    def cmd_schema(self, argument: str) -> str:
+        if not argument:
+            return f"  schema is '{self.schema_style}'"
+        if argument not in ("direct", "triple"):
+            return "? schema must be 'direct' or 'triple'"
+        if argument != self.schema_style:
+            self.schema_style = argument
+            self._perceptor = None
+            return (
+                f"  schema is now '{argument}'. Facts already asserted keep their "
+                "old shape -- :clear first for a clean slate."
+            )
+        return f"  schema is already '{argument}'"
+
+    def cmd_proof(self, argument: str) -> str:
+        return self._toggle("show_proof", argument, "proofs")
+
+    def cmd_prose(self, argument: str) -> str:
+        return self._toggle("show_prose", argument, "prose")
+
+    def _toggle(self, attribute: str, argument: str, label: str) -> str:
+        if argument in ("on", "off"):
+            setattr(self, attribute, argument == "on")
+        elif argument:
+            return f"? {label} takes 'on' or 'off'"
+        return f"  {label} {'on' if getattr(self, attribute) else 'off'}"
+
+    def cmd_learn(self, argument: str) -> str:
+        """Induce a rule for a predicate from what the session already knows."""
+        match = re.match(r"^(\S+)\s+from\s+(.+)$", argument)
+        if not match:
+            return (
+                "? usage: :learn <target/arity> from <pred/arity> [<pred/arity> ...]\n"
+                "  e.g. ':learn grandparent/2 from parent/2'"
+            )
+        target, sources = match.group(1), match.group(2).split()
+        from .induction import Examples, LanguageBias, RuleLearner, Signature
+
+        try:
+            signature = Signature.parse(target)
+        except ValueError as exc:
+            return f"? {exc}"
+        positives = [
+            record.atom
+            for record in self.knowledge.facts
+            if record.atom.signature == (signature.name, signature.arity)
+        ]
+        if not positives:
+            return (
+                f"? no facts of {signature} are asserted, so there is nothing to "
+                "generalise from. Assert some examples first."
+            )
+        universe = sorted(
+            {
+                str(argument_.value)
+                for record in self.knowledge.facts
+                for argument_ in record.atom.args
+                if isinstance(argument_, Const) and not argument_.is_number
+            }
+        )
+        try:
+            examples = Examples.closed_world(positives, universe, signature)
+            bias = LanguageBias.for_target(
+                target, sources, max_variables=max(3, signature.arity + 1), max_body=2
+            )
+            hypothesis = RuleLearner(self.knowledge, bias, examples).learn()
+        except (ValueError, ProgramError) as exc:
+            return f"? {exc}"
+        if not hypothesis.rules:
+            return _indent(hypothesis.describe())
+        for rule in hypothesis.rules:
+            self.knowledge.rules.add(rule)
+            self.transcript.append(str(rule))
+        self._invalidate()
+        lines = [f"  + {rule}" for rule in hypothesis.rules]
+        lines.append(
+            f"  ({examples.summary()}, {hypothesis.candidates_evaluated} candidates tested)"
+        )
+        if not hypothesis.correct:
+            lines.append("  ! " + hypothesis.describe().splitlines()[-2])
+        return "\n".join(lines)
+
+    # -- the loop -----------------------------------------------------------
+
+    def run(
+        self,
+        stream: Optional[TextIO] = None,
+        out: Optional[TextIO] = None,
+        prompt: str = "> ",
+        banner: bool = True,
+    ) -> int:
+        """Read lines until EOF or ``:quit``."""
+        stream = stream or sys.stdin
+        out = out or sys.stdout
+        interactive = stream.isatty() if hasattr(stream, "isatty") else False
+        if banner:
+            print(BANNER, file=out)
+        while self.running:
+            if interactive:
+                print(prompt, end="", file=out, flush=True)
+            line = stream.readline()
+            if not line:
+                break
+            if not interactive and line.strip():
+                print(f"{prompt}{line.rstrip()}", file=out)
+            response = self.handle(line)
+            if response:
+                print(response, file=out, flush=True)
+        return 0
+
+
+class _Reversible:
+    """Snapshot the knowledge base, and restore it if the result will not run."""
+
+    def __init__(self, shell: "Shell") -> None:
+        self.shell = shell
+        self.rules: list = []
+        self.facts: list = []
+
+    def __enter__(self) -> "_Reversible":
+        knowledge = self.shell.knowledge
+        self.rules = list(knowledge.rules.rules)
+        self.facts = list(knowledge.facts)
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        return False
+
+    def restore(self) -> None:
+        knowledge = self.shell.knowledge
+        knowledge.rules.rules = list(self.rules)
+        knowledge._facts = {record.atom: record for record in self.facts}
+        self.shell._invalidate()
+
+    def validate(self) -> Optional[str]:
+        """Return an error message and undo, or None if all is well."""
+        try:
+            self.shell.knowledge.program()
+        except ProgramError as exc:
+            self.restore()
+            return f"! rejected, the knowledge base would not compile:\n  {exc}"
+        return None
+
+
+def _looks_like_logic(text: str) -> bool:
+    """True if the line is more plausibly ASP than English."""
+    stripped = text.strip()
+    if ":-" in stripped:
+        return True
+    return bool(_LOGIC_CALL.match(stripped))
+
+
+def _indent(text: str, prefix: str = "  ") -> str:
+    return "\n".join(prefix + line for line in text.splitlines())
+
+
+_COMMANDS: dict[str, Callable[[Shell, str], str]] = {
+    "help": Shell.cmd_help,
+    "h": Shell.cmd_help,
+    "?": Shell.cmd_help,
+    "quit": Shell.cmd_quit,
+    "q": Shell.cmd_quit,
+    "exit": Shell.cmd_quit,
+    "facts": Shell.cmd_facts,
+    "rules": Shell.cmd_rules,
+    "sets": Shell.cmd_sets,
+    "model": Shell.cmd_model,
+    "why": Shell.cmd_why,
+    "check": Shell.cmd_check,
+    "load": Shell.cmd_load,
+    "retract": Shell.cmd_retract,
+    "clear": Shell.cmd_clear,
+    "save": Shell.cmd_save,
+    "schema": Shell.cmd_schema,
+    "proof": Shell.cmd_proof,
+    "prose": Shell.cmd_prose,
+    "learn": Shell.cmd_learn,
+}
+
+
+def run_shell(**kwargs) -> int:
+    """Entry point used by ``neuralmind shell``."""
+    return Shell(**kwargs).run()
