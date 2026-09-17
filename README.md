@@ -137,6 +137,44 @@ cause worth finding.
 Fed 10,000 random, malformed and contradictory inputs, the core stayed
 byte-identical and every canary kept its answer after every one.
 
+## Noticing what it doesn't know
+
+Phase One could learn a rule when you handed it examples and named the target.
+That's a tool, not growth. The growth loop notices a gap without being pointed
+at one, works out which question would settle it, and then **doesn't use the
+answer** until someone confirms it.
+
+```python
+grower.ask("grandparent(maria, aino)")     # unknown — and now a recorded gap
+grower.questions()                          # ['nothing derives grandparent(maria, aino)']
+
+session = grower.grow("grandparent/2", teacher)
+session.questions                           # 6
+session.rules                               # grandparent(A,B) :- parent(A,C), parent(C,B).
+
+mind.ask("grandparent(maria, aino)")        # still unknown — it's a *proposal*
+grower.confirm(session.rules[0], by="a reviewer")   # through the safety kernel
+```
+
+The question to ask isn't arbitrary: a probe *splits* the candidate
+definitions, so the best one splits them most evenly. On the family domain,
+from one seed example each:
+
+| Target | Active | Random |
+|---|---|---|
+| `grandparent/2` | **6** | 80+ |
+| `sibling/2` | **13** | 80+ |
+| `aunt/2` | **8** | 80+ |
+| `ancestor/2` *(recursive)* | **9** | 80+ |
+
+All four learned correctly; active needs **11%** of random's questions.
+
+Recursion needs a different kind of question. With examples that are all
+parent-child pairs, every candidate is `ancestor`'s base clause and they agree
+on everything — so the loop asks something they *all* say no to, preferring a
+**composition**: if `p(a,b)` and `p(b,c)` hold, `p(a,c)` is exactly what a
+transitive definition would add.
+
 Two rules govern what the mind may *do*. Personal data is routed into a
 confined layer whatever the caller asks for, and cannot be promoted out of it.
 And autonomy is `min(what the host granted, what the stakes allow)` — stakes
@@ -270,6 +308,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *Phase Two, P2.0:* three-valued answers | **100%** on the open-world splits too, where 46% of answers are *unknown* |
 | — | *Phase Two, P2.1:* four kinds of reasoning, one proof | **50/50** mixed questions inside a 10 ms budget |
 | — | *Phase Two, P2.2:* learning that cannot break the core | **10,000** hostile inputs, core intact and canaries passing after every one |
+| — | *Phase Two, P2.3:* growing by asking | family relations incl. recursive `ancestor` learned in **11%** of random's questions |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.

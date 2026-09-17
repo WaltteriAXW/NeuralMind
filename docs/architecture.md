@@ -58,6 +58,21 @@ the mistake the mechanism exists to stop. And autonomy is the *minimum* of the
 host's grant and what the inferred stakes allow, with no way to lower stakes —
 caution rises on a guess, freedom only on a grant.
 
+## 0d. The growth loop (`neuralmind/growth/`)
+
+Gaps are *collected* from diagnoses the system already produces, never
+inferred, so each arrives with its evidence. Induction over a gap keeps the
+definitions that **compete** rather than only the winner, because the
+competitors are what a question is for: the best probe splits them most evenly.
+
+When they all agree, the loop asks one they all say no to — the only way out of
+a space that does not contain the answer, and what makes recursive definitions
+reachable at all.
+
+Nothing here writes to the knowledge base. A settled definition is a proposal;
+the safety kernel decides whether it may be believed. That split is why the
+kernel came first.
+
 ## 1. Perception (`neuralmind/perception/`)
 
 The only place anything is learned. Its output is always

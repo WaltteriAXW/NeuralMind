@@ -14,7 +14,7 @@ with no test is not done, whatever the code says.
 | P2.0 — `Mind` facade and honest answers | One entry point, three-valued answers, short lines | **done** |
 | P2.1 — Workspace, specialists, controller | A place where kinds of reasoning meet | **done** |
 | P2.2 — Safety kernel | Explore without breaking; always a way back | **done** |
-| P2.3 — Growth loop | Notice gaps and close them | not started |
+| P2.3 — Growth loop | Notice gaps and close them | **done** |
 | P2.4 — Self-model and context discovery | Work out where it is, and say so | not started |
 | P2.5 — Language that grows | Widen perception by correction | not started |
 | P2.6 — Background knowledge as defaults | The obvious facts text never states | not started |
@@ -23,6 +23,114 @@ with no test is not done, whatever the code says.
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
 | P2.13 — The school | One command reproduces every number | not started |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.3 — the growth loop
+
+Phase One could learn a rule when you handed it examples and named the target.
+That is a tool, not growth. What was missing is the part that notices a gap
+without being pointed at one, works out which question would settle it, and
+then *does not use the answer* until someone confirms it.
+
+### Gaps are collected, not inferred
+
+Every part of the system already reports its own failures — `why_not()` names
+the literal a rule stalled on, perception reports refused sentences, a
+three-valued answer carries its diagnosis. None of that was built for learning
+and all of it is what a learner needs. So a gap always arrives with its
+evidence and never has to be justified after the fact.
+
+### The question that settles the most
+
+When several definitions fit equally, the examples have not determined the
+answer. A probe *splits* the candidates, so the best one splits them most
+evenly — the halving argument. Measured on the family domain, one seed example
+each:
+
+| Target | Active | Random | Learned correctly |
+|---|---|---|---|
+| `grandparent/2` | **6** | 80+ | yes |
+| `sibling/2` | **13** | 80+ | yes |
+| `aunt/2` | **8** | 80+ | yes |
+| `ancestor/2` *(recursive)* | **9** | 80+ | yes |
+| **total** | **36** | 320+ | active needs **11%** |
+
+The bar was ≤50%. Random hit its 80-question cap on every target, so 320 is a
+floor on what it costs, not the cost.
+
+### Refutation probes, and why they were needed
+
+Pure disagreement-based selection cannot ask about a hypothesis it has not
+formed. `ancestor` is the case: with examples that are all parent-child pairs,
+every candidate is the base clause, they agree on everything, and the loop
+settles confidently on a definition missing its recursion.
+
+So when no probe splits the candidates, the loop asks one they all say *no* to
+— a "yes" refutes the whole space at once. Ordering matters more here than for
+splitters, because nothing predicts the answer: **compositions first**. If
+`p(a,b)` and `p(b,c)` both hold, `p(a,c)` is exactly what a transitive
+definition would add and a non-recursive one would not.
+
+These are budgeted (three consecutive noes and it settles). Without a budget
+the loop asks them until it runs out — 74 questions for `grandparent` instead
+of 6, since a "no" confirms what every candidate already said. Three noes are
+weak evidence; what the sample buys is catching the case where *nothing* fits,
+not proving the definition right.
+
+### Nothing is believed until it is confirmed
+
+A settled definition is a **proposal**. It is stored with belief state
+`proposed`, and `Memory.to_asp()` returns only `confirmed` beliefs, so a
+proposal cannot answer anything. Confirming runs it through the safety kernel,
+which refuses it anyway if it breaks something — and then the proposal is
+`retired`, not silently dropped.
+
+Re-learning something a person retired does **not** resurrect it. "Latest
+write wins" would quietly undo their decision.
+
+### Predicate invention
+
+A knowledge base grown by induction grows sideways: the learner cannot say
+"this combination is a thing", so it spells the combination out again. The
+consolidator finds conjunctions that recur, proposes a predicate, and rewrites
+— then *verifies* that the model is unchanged, because "this should be
+equivalent" is how equivalence-preserving transformations stop preserving
+equivalence. The name is a placeholder and is labelled as one; what the
+conjunction means is the part a person knows.
+
+Finding nothing in the hand-written access policy is the correct answer there:
+`cleared`, `permitted_by_role` and `blocked` *are* the invented predicates
+already. That has its own test, so a future change that starts "finding"
+things there gets looked at.
+
+### What it cost to get right
+
+- **Closed-world negatives killed recursion.** Falling back to the learner
+  passed `negative=None`, which completes every unasked pair as false —
+  including the true ones nobody had been asked about yet, which is exactly
+  the evidence a recursive clause needs and was being rejected for using.
+- **Comparisons are off by default in `LanguageBias`.** `sibling` is
+  `parent(P,X), parent(P,Y), X != Y`; without the disequality the true rule is
+  not in the space at all and the loop settles confidently on something else.
+- **"I don't know" looped forever.** The atom was removed from the random
+  walk's universe but not from the picker's, and the active strategy re-ranks
+  from scratch each round.
+- **A canary on the thing being learned refuses the lesson.** Correct
+  behaviour, and a trap: learning is *supposed* to change that answer, so
+  canaries belong on what you are not trying to learn.
+- **The family was too small.** With five people, genuinely different
+  definitions derive identical atoms and "settled" meant "the data cannot
+  tell". That is a fact about the data, not the loop, and the fix was more
+  data rather than a cleverer tie-break.
+
+### What P2.3 does not do
+
+- **No shell commands yet.** `:gaps`, `:grow`, `:beliefs` are the roadmap's
+  and are not wired in.
+- **The version space is single-clause.** Multi-clause and recursive
+  definitions come from the learner's sequential covering, which is bolted on
+  as an extra candidate rather than enumerated.
+- **Consolidation does not follow `Compare` literals.** `R1 < R2` is skipped,
+  so `toxic_combination` cannot be factored.
 
 ## P2.2 — the safety kernel
 
