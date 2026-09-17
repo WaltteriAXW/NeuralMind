@@ -389,3 +389,54 @@ def test_open_refuses_a_file_that_would_not_compile(shell, tmp_path):
     assert "would not load" in shell.handle(f":open {broken}")
     # ...and the session is untouched.
     assert "isa(bob, cat)" in shell.handle(":facts")
+
+
+# -- Phase Two: growth in the session --------------------------------------
+
+
+def test_a_question_it_cannot_answer_becomes_a_gap(shell):
+    """The diagnosis is produced anyway; recording it is free."""
+    shell.handle("parent(a, b).")
+    shell.handle("grandparent(a, c)?")
+    shell.handle("grandparent(a, c)?")
+    listed = shell.handle(":gaps")
+    assert "grandparent(a, c)" in listed and "2" in listed
+
+
+def test_gaps_become_questions_a_person_can_answer(shell):
+    shell.handle("parent(a, b).")
+    shell.handle("brother(a, d).")
+    shell.handle("uncle(X, Y) :- brother(X, P), parent(P, Y).")
+    shell.handle("uncle(a, c)?")
+    assert "Is parent(d, c) true?" in shell.handle(":questions")
+
+
+def test_gaps_are_empty_before_anything_is_asked(shell):
+    assert "no gaps yet" in shell.handle(":gaps")
+
+
+def test_the_shell_reads_strong_negation_as_logic(shell):
+    """"-flies(pingu)." is a claim, not a sentence to be parsed as English.
+
+    Without the leading "-" in the logic pattern it went to the text reader
+    and came back as two nonsense facts about the predicate name.
+    """
+    assert "-grandparent(b, c)" in shell.handle("-grandparent(b, c).")
+    assert "act(" not in shell.handle("-flies(pingu).")
+
+
+def test_grow_asks_rather_than_assuming(shell):
+    for fact in ("parent(a, b).", "parent(b, c).", "parent(a, d).", "parent(d, e)."):
+        shell.handle(fact)
+    shell.handle("grandparent(a, c).")
+    response = shell.handle(":grow grandparent/2")
+    assert "I need to know" in response or "proposed" in response
+
+
+def test_grow_needs_something_to_generalise_from(shell):
+    shell.handle("parent(a, b).")
+    assert "nothing found" in shell.handle(":grow mystery/2")
+
+
+def test_beliefs_starts_empty(shell):
+    assert "nothing remembered" in shell.handle(":beliefs")

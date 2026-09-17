@@ -152,9 +152,28 @@ class GrowthLoop:
         worth making next to the alternative, run on the same task.
         """
         signature = Signature.parse(target)
-        session = Session(
-            target=signature, positive=list(positive), negative=list(negative)
-        )
+        seeded = list(positive)
+        refuted = list(negative)
+        if not seeded and not refuted:
+            # Whatever the knowledge base already holds for the target. A
+            # caller who says nothing means "use what you know", not "start
+            # from nothing" -- starting from nothing would make the loop ask
+            # for an example it already has.
+            #
+            # Strong negation is how a "no" is stated: "-grandparent(b, c)."
+            # is a claim that it is false, which is exactly a negative
+            # example. Failure-to-derive is not, since that is true of
+            # everything not yet learned.
+            for record in self.knowledge.facts:
+                atom = record.atom
+                if atom.signature == (signature.name, signature.arity):
+                    seeded.append(atom)
+                elif (
+                    atom.is_negated
+                    and atom.positive.signature == (signature.name, signature.arity)
+                ):
+                    refuted.append(atom.positive)
+        session = Session(target=signature, positive=seeded, negative=refuted)
         constants = self.hypothesiser.constants()
         universe = None
         refuted_tries = 0

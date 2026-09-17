@@ -64,6 +64,10 @@ HELP = """
   :retract <atom>        remove an asserted fact
   :learn <target/arity> [from <pred/arity> ...]
                          induce a rule for the target from what is known
+  :gaps                  what it could not answer, most-asked first
+  :questions             what it would need to be told
+  :grow [target/arity]   one growth cycle: propose a rule by asking
+  :beliefs               what is remembered, and whether it is confirmed
   :expect <atom>         this should follow but does not -- propose fixes
   :wrong <atom>          this follows but should not -- propose fixes
   :accept <n>            apply one of the proposed fixes
@@ -78,7 +82,9 @@ HELP = """
   :quit
 """.rstrip()
 
-_LOGIC_CALL = re.compile(r"^[a-z_][A-Za-z0-9_]*\s*\(.*\)\s*\.?\??$", re.DOTALL)
+#: A leading "-" is strong negation -- "-flies(pingu)." is a claim that it is
+#: false, and a line the session has to read as logic rather than as English.
+_LOGIC_CALL = re.compile(r"^-?[a-z_][A-Za-z0-9_]*\s*\(.*\)\s*\.?\??$", re.DOTALL)
 
 
 @dataclass
@@ -98,6 +104,8 @@ class Shell:
     transcript: list[str] = field(default_factory=list)
     _perceptor: object = None
     _engine: object = None
+    _gaps: object = None
+    _memory: object = None
     _realiser: Realiser = field(default_factory=Realiser)
     _reported_violations: set = field(default_factory=set)
     _undo: list = field(default_factory=list)
@@ -291,7 +299,11 @@ class Shell:
             return f"! {exc}"
 
         if not answer.holds:
-            lines = ["no"]
+            # A question the session could not answer is exactly what the
+            # growth loop wants to hear about, and it is free to record here:
+            # the diagnosis was produced anyway.
+            self.gaps.from_answer(answer)
+            lines = ["no" if answer.status == "no" else "unknown"]
             if answer.diagnosis is not None:
                 lines.append(_indent(answer.diagnosis.describe()))
             return "\n".join(lines)
@@ -533,6 +545,96 @@ class Shell:
             lines.append(f"  ! {hypothesis.incomplete_reason or 'not fully correct'}")
         return "\n".join(lines)
 
+    # -- growth --------------------------------------------------------
+
+    @property
+    def gaps(self):
+        if self._gaps is None:
+            from .growth import GapCollector
+
+            self._gaps = GapCollector()
+        return self._gaps
+
+    @property
+    def memory(self):
+        if self._memory is None:
+            from .growth import Memory
+
+            self._memory = Memory()
+        return self._memory
+
+    def cmd_gaps(self, argument: str) -> str:
+        """What the session could not answer, most-asked first."""
+        found = self.gaps.ranked()
+        if not found:
+            return "  no gaps yet — ask something it cannot answer"
+        return "\n".join(f"  {gap.describe()}" for gap in found)
+
+    def cmd_questions(self, argument: str) -> str:
+        """What the session would need to be told to close its gaps."""
+        found = self.gaps.ranked()
+        if not found:
+            return "  nothing to ask about"
+        lines = []
+        for gap in found:
+            if gap.missing is not None:
+                lines.append(f"  Is {gap.missing} true?")
+            elif gap.goal is not None:
+                lines.append(f"  Show me something that is {gap.goal.predicate}?")
+            else:
+                lines.append(f"  How should I read: {gap.subject}")
+        return "\n".join(lines)
+
+    def cmd_grow(self, argument: str) -> str:
+        """Run one growth cycle, asking about the gap it names.
+
+        Interactive rather than automatic: each question is put to you, and
+        what comes back is a *proposal*. Nothing changes an answer until
+        ``:accept`` confirms it.
+        """
+        target = argument.strip()
+        if not target:
+            found = [g for g in self.gaps.ranked() if g.goal is not None]
+            if not found:
+                return "? usage: :grow <target/arity>   (or ask something first)"
+            goal = found[0].goal
+            target = f"{goal.predicate}/{goal.arity}"
+        from .growth import GrowthLoop, PROPOSED
+
+        pending: list = []
+
+        def ask(atom):
+            pending.append(atom)
+            return None  # the shell cannot block for an answer here
+
+        try:
+            session = GrowthLoop(self.knowledge, max_questions=1).learn(target, ask)
+        except Exception as exc:
+            return f"? {type(exc).__name__}: {exc}"
+        if pending:
+            return (
+                f"  to learn {target} I need to know:\n"
+                f"    Is {pending[0]} true?\n"
+                "  answer it as a fact, then :grow again"
+            )
+        if not session.rules:
+            return f"  nothing found for {target}: {session.stopped}"
+        lines = [f"  proposed for {target} after {session.questions} question(s):"]
+        for rule in session.rules:
+            self.memory.remember(
+                str(rule), state=PROPOSED, provenance=f"growth:{target}"
+            )
+            lines.append(f"    ? {rule}")
+        lines.append("  nothing changes until you confirm it with :accept")
+        return "\n".join(lines)
+
+    def cmd_beliefs(self, argument: str) -> str:
+        """Everything remembered, and what the session makes of it."""
+        beliefs = self.memory.beliefs()
+        if not beliefs:
+            return "  nothing remembered yet"
+        return "\n".join(f"  {belief.describe()}" for belief in beliefs)
+
     def cmd_undo(self, argument: str) -> str:
         if not self._undo:
             return "  nothing to undo"
@@ -748,6 +850,10 @@ _COMMANDS: dict[str, Callable[[Shell, str], str]] = {
     "proof": Shell.cmd_proof,
     "prose": Shell.cmd_prose,
     "learn": Shell.cmd_learn,
+    "gaps": Shell.cmd_gaps,
+    "questions": Shell.cmd_questions,
+    "grow": Shell.cmd_grow,
+    "beliefs": Shell.cmd_beliefs,
     "undo": Shell.cmd_undo,
     "history": Shell.cmd_history,
     "open": Shell.cmd_open,
