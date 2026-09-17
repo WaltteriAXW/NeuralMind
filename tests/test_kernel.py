@@ -579,3 +579,56 @@ def test_a_rejected_verdict_is_falsey_but_still_present():
     verdict = Verdict(REJECTED, "p(X, Y) :- q(X).", "safety", "unbound Y")
     assert not verdict
     assert verdict is not None and verdict.check == "safety"
+
+
+def test_the_canaries_can_read_a_model_someone_already_solved():
+    """The firewall's dry run is exactly the program the canaries need.
+
+    Solving it twice per guarded change was pure waste, and the saving grows
+    with the knowledge base -- which is where it matters.
+    """
+    stack = LayerStack("t")
+    stack.load_core(CORE_RULES)
+    stack.add_fact("cat(bob)", CONFIRMED)
+    canaries = CanarySet.capture(stack, ["mammal(bob)", "flies(bob)", "dog(bob)"])
+
+    verdict = Firewall(stack).check("furry(X) :- cat(X).")
+    assert verdict and verdict.model is not None
+    assert canaries.check(stack, model=verdict.model) == canaries.check(stack)
+
+
+def test_reading_a_model_keeps_the_three_answers_apart():
+    """An absence means different things per predicate, and the model alone
+    cannot say which -- so it carries the program that can."""
+    stack = LayerStack("t")
+    stack.load_core(CORE_RULES)
+    stack.add_fact("cat(bob)", CONFIRMED)
+    canaries = CanarySet.capture(stack, ["mammal(bob)", "flies(bob)", "dog(bob)"])
+    verdict = Firewall(stack).check("furry(X) :- cat(X).")
+    # flies/1 is open, dog/1 is not: both are underivable and they differ.
+    statuses = {str(c.goal): c.status for c in canaries}
+    assert statuses["flies(bob)"] == "unknown"
+    assert statuses["dog(bob)"] == "no"
+    assert not canaries.check(stack, model=verdict.model)
+
+
+def test_a_sandbox_change_does_not_reuse_the_firewall_model(kernel):
+    """The firewall's view excludes the sandbox, so its dry-run model is of a
+    different program than the one that exists afterwards.
+
+    Reusing it there would check the canaries against a theory that includes
+    the sandbox rule as though it were confirmed -- which is both the wrong
+    answer and the wrong direction, since the sandbox is meant to be invisible.
+    """
+    from neuralmind.kernel import LAYER_ORDER, SANDBOX
+
+    assert SANDBOX not in kernel.firewall.layers
+
+    # A rule that would break a canary if it were visible.
+    outcome = kernel.learn("flies(X) :- cat(X).", SANDBOX)
+    assert outcome, outcome.reason
+    # Accepted, because the sandbox is not in the default view...
+    assert kernel.canaries.healthy(kernel.layers)
+    assert kernel.ask("flies(bob)").status == "unknown"
+    # ...and visible only to someone who asks for it.
+    assert kernel.layers.engine(LAYER_ORDER).ask("flies(bob)").status == "yes"

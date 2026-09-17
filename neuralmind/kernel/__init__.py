@@ -218,9 +218,17 @@ class Kernel:
                 Outcome(False, verdict=verdict, reason=verdict.describe())
             )
 
+        # The firewall's dry run solved exactly the program that will exist if
+        # this rule is admitted, so the canaries can read their answers off
+        # that model instead of solving it a second time -- but only when the
+        # target layer is one the firewall actually included. Promoting into
+        # the sandbox produces a different program, and reusing the model
+        # there would check the wrong thing.
+        reusable = verdict.model if layer in self.firewall.layers else None
+
         with transaction(self.layers, f"learning {name}") as change:
             self.layers.add_rules(source, layer, name)
-            failures = self.canaries.check(self.layers, self.mode_layers)
+            failures = self.canaries.check(self.layers, self.mode_layers, reusable)
             if failures:
                 change.rollback("; ".join(f.describe() for f in failures))
 

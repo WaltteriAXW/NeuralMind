@@ -52,6 +52,10 @@ class Verdict:
     reason: str = ""
     #: How long the dry run took, in milliseconds.
     elapsed_ms: float = 0.0
+    #: The model the dry run produced, when it got that far. It is the model
+    #: of exactly the program that will exist if this rule is admitted, so a
+    #: caller about to check canaries can use it instead of solving again.
+    model: object = None
 
     def __bool__(self) -> bool:
         return self.outcome == ADMITTED
@@ -67,7 +71,7 @@ class Verdict:
             payload["check"] = self.check
             payload["reason"] = self.reason
         payload["elapsed_ms"] = round(self.elapsed_ms, 2)
-        return payload
+        return payload  # the model is deliberately not serialised
 
     def __str__(self) -> str:
         return self.describe()
@@ -156,7 +160,9 @@ class Firewall:
                     f"breaks a rule the core states: {broken}", elapsed,
                 )
             )
-        return self._record(Verdict(ADMITTED, source, elapsed_ms=elapsed))
+        return self._record(
+            Verdict(ADMITTED, source, elapsed_ms=elapsed, model=model)
+        )
 
     def admit(self, source: str, layer: str, name: str = "candidate") -> Verdict:
         """Check, and add to ``layer`` only if it passed."""

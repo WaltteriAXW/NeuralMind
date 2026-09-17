@@ -131,6 +131,10 @@ class Model:
     iterations: int = 0
     #: Set when reasoning stopped early because a limit was hit.
     truncated: Optional[str] = None
+    #: The program this model came from, when the solver recorded it. Needed
+    #: to read an *absence* correctly: whether an underivable atom is false or
+    #: merely unknown is a property of the program, not of the model.
+    program: Optional[object] = None
 
     index: AtomIndex = field(default_factory=AtomIndex, repr=False)
 

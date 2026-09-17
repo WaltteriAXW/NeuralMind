@@ -117,7 +117,7 @@ class ForwardChainer:
 
     def run(self) -> Model:
         """Compute the least model and return it with all justifications."""
-        model = Model()
+        model = Model(program=self.program)
         total_iterations = 0
         for stratum in self._strata:
             compiled = [_compile(rule) for rule in stratum]

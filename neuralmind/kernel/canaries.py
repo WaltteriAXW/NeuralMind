@@ -98,11 +98,22 @@ class CanarySet:
         return cls(found)
 
     def check(
-        self, stack: LayerStack, layers: Sequence[str] = DEFAULT_LAYERS
+        self,
+        stack: LayerStack,
+        layers: Sequence[str] = DEFAULT_LAYERS,
+        model=None,
     ) -> list[CanaryFailure]:
-        """Every canary that no longer gives its answer. Empty means healthy."""
+        """Every canary that no longer gives its answer. Empty means healthy.
+
+        ``model`` lets a caller that has already solved this exact program hand
+        the result over instead of solving it again. The firewall's dry run is
+        precisely that -- it solves the program that will exist if the rule is
+        admitted -- and reusing it halves the cost of a guarded change.
+        """
         if not self._canaries:
             return []
+        if model is not None:
+            return self._against_model(model)
         try:
             engine = stack.engine(layers)
         except Exception as exc:
@@ -119,8 +130,30 @@ class CanarySet:
                 failures.append(CanaryFailure(canary, got))
         return failures
 
-    def healthy(self, stack: LayerStack, layers: Sequence[str] = DEFAULT_LAYERS) -> bool:
-        return not self.check(stack, layers)
+    def _against_model(self, model) -> list[CanaryFailure]:
+        """Check without an engine, reading the answers straight off a model.
+
+        A canary's three answers map onto the model directly: the goal holds,
+        its strong negation holds, or neither -- which is the same reading
+        :class:`~neuralmind.inference.engine.Answer` gives, without the cost
+        of rebuilding one.
+        """
+        failures = []
+        for canary in self._canaries:
+            if model.holds(canary.goal):
+                got = "yes"
+            elif model.holds(canary.goal.complement()):
+                got = "no"
+            else:
+                got = "unknown" if _is_open(model, canary.goal) else "no"
+            if got != canary.status:
+                failures.append(CanaryFailure(canary, got))
+        return failures
+
+    def healthy(
+        self, stack: LayerStack, layers: Sequence[str] = DEFAULT_LAYERS, model=None
+    ) -> bool:
+        return not self.check(stack, layers, model)
 
     def to_dict(self) -> dict:
         return {
@@ -131,3 +164,11 @@ class CanarySet:
 
 def _as_atom(goal) -> Atom:
     return goal if isinstance(goal, Atom) else parse_atom(goal)
+
+
+def _is_open(model, goal: Atom) -> bool:
+    """Whether the program this model came from reads silence as *unknown*."""
+    program = getattr(model, "program", None)
+    if program is None:
+        return False
+    return program.is_open(goal.signature)
