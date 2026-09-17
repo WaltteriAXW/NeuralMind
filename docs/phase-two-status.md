@@ -15,7 +15,7 @@ with no test is not done, whatever the code says.
 | P2.1 — Workspace, specialists, controller | A place where kinds of reasoning meet | **done** |
 | P2.2 — Safety kernel | Explore without breaking; always a way back | **done** |
 | P2.3 — Growth loop | Notice gaps and close them | **done** |
-| P2.4 — Self-model and context discovery | Work out where it is, and say so | not started |
+| P2.4 — Self-model and context discovery | Work out where it is, and say so | **done** |
 | P2.5 — Language that grows | Widen perception by correction | not started |
 | P2.6 — Background knowledge as defaults | The obvious facts text never states | not started |
 | P2.7 — Action, time and goals | Decide, not just answer | not started |
@@ -23,6 +23,121 @@ with no test is not done, whatever the code says.
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
 | P2.13 — The school | One command reproduces every number | not started |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.4 — working out where it is
+
+`Mind.__init__` has taken no domain argument since P2.0, with a test asserting
+it never will. This is the milestone that makes that rule survivable rather
+than merely principled.
+
+### Shape first, and nothing else
+
+An observation becomes facts about its *shape*: "records carry a field named
+stock", "a value is a number with a currency attached", "this field changed
+between ticks". Never "this is a shop". Whether those add up to a shop is a
+question for rules, which a person can read and disagree with, rather than for
+a classifier, which they cannot.
+
+The facet rules live in `neuralmind/self/profiles/facets.lp` and run on the
+ordinary engine, so a context hypothesis is a derivation:
+
+```
+facet(inventory, 7)  (by facet(F, W) :- suggests(F, W), not beaten(F, W).)
+├── suggests(inventory, 7)  (by suggests(inventory, 7) :- record_with(stock), record_with(sku).)
+│   ├── record_with(stock)  [given]
+│   └── record_with(sku)  [given]
+└── not beaten(inventory, 7)  [not derivable]
+```
+
+### Nine unlabelled hosts
+
+| Host | Stakes | Domain | Covered | Could not place |
+|---|---|---|---|---|
+| grid game | low | game | 0.44 | position, direction, actions |
+| text game | low | — | 1.00 | |
+| CAD parameters | low | engineering | 0.67 | part, material |
+| banking chat *(real: BANKING77)* | **high** | bank_chat | 1.00 | |
+| service dialogue | low | — | 1.00 | |
+| financial tables | medium | investing | 0.83 | period |
+| grocery feed | medium | grocery | 0.50 | product, category |
+| pump system *(no pack covers it)* | low | engineering | 0.50 | pump_a, valve_b, alarm |
+| money transfer | **high** | banking_records | 0.50 | account_id, counterparty |
+
+Being straight about the data: the banking chat and the out-of-scope stream
+are **real utterances** (BANKING77 and CLINC150). The rest are synthesised *in
+the shape of* the roadmap's hosts — they mirror the structure, because
+structure is what the mind reads, but none of them is the real corpus and
+calling them "eight hosts" without saying so would be overselling.
+
+The pump system is the interesting one. It is outside every facet pack, and the
+right answer is what it gives: the facets it does recognise (`quantities`),
+and the vocabulary it could not place named rather than ignored. That list is
+what the module builder (P2.8) is handed.
+
+### Caution before recognition
+
+Stakes are raised **before** any domain is matched. After a *single*
+observation of a money-moving host:
+
+```
+stakes high, domain banking_records at 0.40
+L2: act after confirmation; granted L3, bound by stakes
+transfer(500): confirm — this needs a person to confirm it
+```
+
+The mind has not worked out where it is and is already careful, which is the
+only order that is safe. The context can lower autonomy and can never raise
+it — design rule 11, now reachable through a second path.
+
+### Reading an utterance
+
+A sentence has almost no shape, so shape alone sees "free text, a question,
+first person" and stops. `neuralmind/self/intent.py` is a TF-IDF
+nearest-centroid classifier trained on BANKING77 + CLINC150 — it classifies
+and never generates, and the out-of-scope threshold is *calibrated* on held-out
+data rather than chosen:
+
+| target in-scope recall | family | intent | out-of-scope kept out |
+|---|---|---|---|
+| 0.85 | 82.0% | 68.6% | 67.3% |
+| **0.90** | **86.9%** | **71.5%** | **56.1%** |
+| 0.95 | 92.4% | 74.3% | 31.9% |
+
+A bag-of-words baseline, and the numbers are a baseline's. The roadmap wants
+multilingual-e5 here and is right to; what this buys is a legible out-of-scope
+decision with no download and no new dependency — a cosine against a centroid
+of counted words can be taken apart by hand.
+
+### What it cost to get right
+
+- **Drift cannot be seen from an accumulated signature.** Once the mind has
+  seen a shop it has seen one for ever, so comparing against the running total
+  never notices anything. It needs a window over recent observations.
+- **And it is *loss*, not disjointness.** While the window straddles two hosts
+  it shows both, which looks like agreement with each. Drift is what was
+  settled disappearing.
+- **The baseline slid during the transition.** Updating it every steady step
+  meant it absorbed the new host before the switch was noticed, so it has to
+  hold at the last settled point.
+- **`stakes(medium) :- not stakes(high)` is recursion through negation.** It
+  reads perfectly and has no least model; two flag predicates express the same
+  thing and stratify.
+- **"A is the smallest" is not `A <= B, A <= C`.** That guard only fires when
+  the facets happen to be listed in the right order, so `domain(grocery)` was
+  never derived. The minimum has to be computed.
+- **Coverage over-credited itself.** `record_with` is emitted for every field,
+  so any facet citing it marked the whole vocabulary explained. Specific
+  evidence credits what it names; only a short list of genuinely generic facts
+  credits everything of their kind.
+
+### What P2.4 does not do
+
+- **No embeddings.** Vocabulary matching is exact, so `amount` and `menge` are
+  different symbols. The roadmap closes that with multilingual-e5.
+- **Seven of nine hosts are synthesised.** Real BabyAI, TextWorld, MultiWOZ and
+  FinQA streams would be a better test and are not reachable from here.
+- **Calibration is recorded, not used.** `SelfModel` tracks whether confidence
+  held up; nothing yet consults it to soften a brief line.
 
 ## P2.3 — the growth loop
 

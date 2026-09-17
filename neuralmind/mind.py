@@ -29,6 +29,14 @@ to exist from the start or there is nothing to look back at.
 ``brief`` is one line under a word budget, with every clause traceable to a
 node of the proof. See :mod:`neuralmind.output.brief`.
 
+**It works out where it is.** :meth:`observe` feeds the context layer
+(:mod:`neuralmind.self`), which reads the *shape* of what arrives and derives
+which facets are in play -- money, inventory, conversation -- with the ordinary
+engine, so every hypothesis has a proof. Stakes follow the facets and reach the
+autonomy gate immediately, before any domain is recognised: money plus an
+action list is dangerous whether or not the mind has worked out it is in a
+bank.
+
 **A way back.** Everything the mind learns goes through the safety kernel
 (:mod:`neuralmind.kernel`): layered knowledge with a read-only core, a firewall
 on every rule, canaries checked after every change, and a transaction that
@@ -151,6 +159,8 @@ class Mind:
         self._engine: Optional[ReasoningEngine] = None
         self._workspace = None
         self._controller = None
+        self._context = None
+        self._self_model = None
 
     # -- parts built on demand ---------------------------------------------
 
@@ -172,6 +182,29 @@ class Mind:
         if self._engine is None:
             self._engine = self.kernel.layers.engine(self.kernel.mode_layers)
         return self._engine
+
+    @property
+    def context(self):
+        """The context layer. Built on first use, so importing is cheap."""
+        if self._context is None:
+            from .self import ContextDiscovery
+
+            self._context = ContextDiscovery()
+        return self._context
+
+    @property
+    def model(self):
+        """The mind's facts about itself, refreshed from the parts that hold them."""
+        if self._self_model is None:
+            from .self import SelfModel
+
+            self._self_model = SelfModel("mind")
+        self._self_model.sync(
+            kernel=self.kernel,
+            reading=self._context.reading if self._context is not None else None,
+            specialists=self.specialists(),
+        )
+        return self._self_model
 
     @property
     def workspace(self):
@@ -236,6 +269,11 @@ class Mind:
         guessing at it here would be the "you are in a bank" assumption by
         another route.
         """
+        # Every observation is evidence about where this is, whatever else it
+        # is. Reading it costs a rule evaluation and is the only way the mind
+        # ever finds out.
+        self.context.observe(payload)
+        self.context.apply(self.kernel.autonomy)
         kind = _classify(payload)
         if kind == "text":
             perception = self.tell(str(payload))
@@ -353,6 +391,7 @@ class Mind:
         rules = len(self.knowledge.rules.derivation_rules)
         seen = len(self.observations)
         unread = sum(1 for o in self.observations if not o.understood)
+        reading = self._context.reading if self._context is not None else None
         # Three sentences, each about one thing: where it is, what it knows,
         # what it cannot do. Every clause is read off state -- nothing here is
         # estimated, which is what makes the report safe to show a user.
@@ -364,11 +403,19 @@ class Mind:
             knowledge += ", open-world"
         elif open_predicates:
             knowledge += ", open on " + ", ".join(open_predicates)
-        lines = [
-            f"Context unresolved — {seen} observation(s) in, "
-            f"{unread} not yet interpretable.",
-            knowledge + ".",
-        ]
+        if reading is None or reading.unresolved:
+            where = (
+                f"Context unresolved — {seen} observation(s) in, "
+                f"{unread} not yet interpretable."
+            )
+        else:
+            where = (
+                f"Looks like {reading.domain} "
+                f"({reading.domain_confidence:.2f}) from {seen} observation(s): "
+                + ", ".join(f.name for f in reading.facets[:3])
+                + f"; stakes {reading.stakes}."
+            )
+        lines = [where, knowledge + "."]
         missing = sorted(name for name, ready in self.specialists().items() if not ready)
         limits = []
         if self.kernel.watchdog.mode.name != "full":

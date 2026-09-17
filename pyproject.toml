@@ -52,6 +52,9 @@ include = ["neuralmind*"]
 [tool.setuptools.package-data]
 neuralmind = [
   "knowledge/rules/*.lp",
+  "self/profiles/*.lp",
+  "self/weights/*.npz",
+  "self/weights/*.json",
   "perception/weights/*.npz",
   "perception/weights/*.json",
 ]

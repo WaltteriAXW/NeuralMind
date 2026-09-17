@@ -8,6 +8,7 @@ dist/
 venv/
 data/mnist/
 data/proofwriter/
+data/contexts/
 data/*.gz
 data/*.npz
 *.ipynb_checkpoints

@@ -108,6 +108,40 @@ On 50 hand-written mixed questions, all 50 are answered correctly within a
 10 ms budget, with a worst-case overshoot of 8.9%. Under a budget too small to
 finish, answers weaken to `unknown` — never to a wrong answer.
 
+## It works out where it is
+
+Nothing tells the mind which host it's running in — `Mind()` takes no domain
+argument and a test asserts it never will. It reads the **shape** of what
+arrives and derives which building blocks are in play, with the ordinary
+engine, so every hypothesis is a derivation rather than a score:
+
+```console
+$ python examples/11_where_am_i.py
+
+host               stakes  domain             cover  what it could not place
+grocery_feed       medium  grocery            0.50   product, category, reorder_at
+banking_chat       high    bank_chat          1.00   —
+pump_system        low     engineering        0.50   pump_a, valve_b, alarm
+
+facet(inventory, 7)
+├── suggests(inventory, 7)  (by suggests(inventory, 7) :- record_with(stock), record_with(sku).)
+│   ├── record_with(stock)  [given]
+│   └── record_with(sku)  [given]
+└── not beaten(inventory, 7)  [not derivable]
+```
+
+**Caution arrives before recognition.** After a *single* observation of a
+money-moving host, stakes are high and the gate has already tightened — while
+the domain guess is still at 0.40. Waiting to be sure where you are before
+becoming careful is exactly backwards.
+
+The mind also says what it *couldn't* place. For a host no pack covers, the
+unexplained vocabulary is the honest output and the module builder's input.
+
+Reading an utterance needs more than shape, so there's a TF-IDF
+nearest-centroid classifier over BANKING77 and CLINC150 — it classifies, never
+generates, and its most useful answer is **"not something I handle"**.
+
 ## Learning without breaking
 
 A mind that learns will sometimes be wrong. It will induce a rule from two
@@ -312,6 +346,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *Phase Two, P2.1:* four kinds of reasoning, one proof | **50/50** mixed questions inside a 10 ms budget |
 | — | *Phase Two, P2.2:* learning that cannot break the core | **10,000** hostile inputs, core intact and canaries passing after every one |
 | — | *Phase Two, P2.3:* growing by asking | family relations incl. recursive `ancestor` learned in **11%** of random's questions |
+| — | *Phase Two, P2.4:* never told where it is | **9 unlabelled hosts** read correctly; stakes raised before any domain is recognised |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.

@@ -260,13 +260,24 @@ def test_observations_are_classified_by_shape_alone(payload, kind):
     assert Mind().observe(payload).kind == kind
 
 
-def test_the_self_report_says_the_context_is_unresolved():
-    """Until P2.4 lands, claiming to know where it is would be a lie."""
+def test_the_self_report_says_what_it_has_worked_out_and_no_more():
+    """Before P2.4 this asserted "unresolved" unconditionally, because
+    claiming to know where it was would have been a lie. Now there is a
+    context layer, so the honest assertion is the weaker one: it reports a
+    reading when it has one and says unresolved when it does not.
+    """
+    empty = Mind()
+    assert "unresolved" in empty.self_report()
+
     mind = Mind()
-    mind.observe({"stock": 4})
+    mind.observe({"sku": "MLK-1L", "stock": 4, "price": "1.29 EUR"})
     report = mind.self_report()
-    assert "unresolved" in report
-    assert report.count(".") <= 3
+    assert report.count(".") <= 4
+    reading = mind.context.reading
+    if reading.unresolved:
+        assert "unresolved" in report
+    else:
+        assert reading.facets[0].name in report or reading.domain in report
 
 
 def test_the_self_report_is_read_off_state_not_estimated():

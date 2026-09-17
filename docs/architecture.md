@@ -73,6 +73,25 @@ Nothing here writes to the knowledge base. A settled definition is a proposal;
 the safety kernel decides whether it may be believed. That split is why the
 kernel came first.
 
+## 0e. Knowing where it is (`neuralmind/self/`)
+
+An observation becomes facts about its *shape* — "records carry a field named
+stock", "this value changed between ticks" — never about a domain. Whether
+those add up to a shop is a question for rules in `profiles/facets.lp`, which
+run on the ordinary engine, so a context hypothesis is a derivation a person
+can take apart.
+
+Facets first, domains second: a facet is a building block that shows up in many
+places, and recognising facets works even somewhere new. **Stakes come before
+both** and reach the autonomy gate immediately — money plus an action list is
+dangerous whether or not the mind has worked out it is in a bank.
+
+Drift is judged on a window of recent observations, because the signature
+accumulates and a comparison against the running total can never notice a
+switch. `SelfModel` holds the mind's facts about itself in the same vocabulary
+as everything else, which is the whole of what "self-awareness" means here and
+why it is testable.
+
 ## 1. Perception (`neuralmind/perception/`)
 
 The only place anything is learned. Its output is always
