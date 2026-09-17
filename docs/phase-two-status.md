@@ -124,8 +124,9 @@ things there gets looked at.
 
 ### What P2.3 does not do
 
-- **No shell commands yet.** `:gaps`, `:grow`, `:beliefs` are the roadmap's
-  and are not wired in.
+- **`:grow` asks one question per invocation.** The shell cannot block for an
+  answer, so a cycle is several turns: it asks, you state the fact (or its
+  strong negation), you run it again.
 - **The version space is single-clause.** Multi-clause and recursive
   definitions come from the learner's sequential covering, which is bolted on
   as an extra candidate rather than enumerated.
