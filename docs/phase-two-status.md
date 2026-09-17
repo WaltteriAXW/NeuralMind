@@ -78,6 +78,25 @@ another's instance — not its answers, not its rules, not a snapshot of it.
 **Autonomy.** No action above the granted level reaches the host, and every
 decision is logged with which of the two bound it.
 
+### One redundancy worth removing
+
+`learn()` ran the firewall's dry run and then solved the knowledge base again
+to check the canaries. Those are the same program — the dry run solves exactly
+what will exist if the rule is admitted — so the firewall now hands its model
+over. **1.87×** on the accepted path at 500 rules, and the saving grows with
+the knowledge base.
+
+It makes no difference to the fuzz figure, which is dominated by *rejected*
+inputs: those never reach the canary check and only ever paid one solve. Worth
+saying, because the first A/B looked like a 1.3× win and was measuring a
+smaller program rather than a faster path.
+
+Reading answers off a model needed one thing the model did not carry: whether
+an underivable atom is false or merely unknown is a property of the *program*,
+not of the model. `ForwardChainer` now records the program it solved, which is
+the honest fix — a model that cannot say which of the three answers an absence
+means is a model you can misread.
+
 ### What it cost to get right
 
 - **`recover()` checked the wrong mode.** A degraded mode answers differently

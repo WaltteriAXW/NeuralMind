@@ -632,3 +632,24 @@ def test_a_sandbox_change_does_not_reuse_the_firewall_model(kernel):
     assert kernel.ask("flies(bob)").status == "unknown"
     # ...and visible only to someone who asks for it.
     assert kernel.layers.engine(LAYER_ORDER).ask("flies(bob)").status == "yes"
+
+
+def test_reusing_the_model_gives_the_same_verdicts_as_solving_again():
+    """The optimisation has to be invisible, including where it says no."""
+    from neuralmind.kernel.canaries import CanarySet as _CanarySet
+
+    stack = LayerStack("t")
+    stack.load_core(CORE_RULES)
+    stack.add_fact("cat(bob)", CONFIRMED)
+    canaries = CanarySet.capture(
+        stack, ["mammal(bob)", "warm_blooded(bob)", "flies(bob)", "dog(bob)"]
+    )
+    firewall = Firewall(stack)
+    for rule in ["furry(X) :- cat(X).", "flies(X) :- cat(X).", "purrs(X) :- cat(X)."]:
+        verdict = firewall.check(rule)
+        if not verdict:
+            continue
+        stack.add_rules(rule, CONFIRMED)
+        reused = [f.describe() for f in canaries.check(stack, model=verdict.model)]
+        solved = [f.describe() for f in canaries.check(stack)]
+        assert reused == solved, rule
