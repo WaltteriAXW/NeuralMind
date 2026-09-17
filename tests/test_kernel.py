@@ -533,15 +533,49 @@ def test_junk_never_reaches_the_core(kernel):
 
 
 def test_a_bad_pack_is_quarantined_and_the_mind_keeps_answering(kernel):
-    """P2.2's second bar, with all three kinds of bad at once."""
-    pack = """
-    unsafe(A, B) :- cat(A).
-    dog(X) :- cat(X).
-    deep(X) :- cat(X).  deep(g(X)) :- deep(X).
+    """P2.2's second bar, with all three kinds of bad at once.
+
+    The runaway case is arithmetic rather than a function term: this language
+    has no function symbols, so ``deep(g(X))`` is rejected at the parser and
+    never reaches the budget check it was meant to exercise.
     """
-    for rule in [r.strip() for r in pack.strip().split("\n") if r.strip()]:
-        assert not kernel.learn(rule, CONFIRMED)
-    assert len(kernel.quarantine) >= 2
+    kernel.layers.add_fact("n(1)", CONFIRMED)
+    pack = {
+        "unsafe": "unsafe(A, B) :- cat(A).",
+        "contradiction": "dog(X) :- cat(X).",
+        "runaway": "n(Y) :- n(X), Y = X + 1.",
+    }
+    checks = {}
+    for label, rule in pack.items():
+        outcome = kernel.learn(rule, CONFIRMED)
+        assert not outcome, label
+        # `is not None`, not truthiness: a rejected Verdict is deliberately
+        # falsey, so `if outcome.verdict` asks a different question.
+        checks[label] = (
+            outcome.verdict.check if outcome.verdict is not None else "canary"
+        )
+    assert checks == {
+        "unsafe": "safety",
+        "contradiction": "consistency",
+        "runaway": "budget",
+    }
+    assert len(kernel.quarantine) == 3
     assert kernel.ask("mammal(bob)").status == "yes"
     assert kernel.ask("warm_blooded(bob)").status == "yes"
     assert kernel.canaries.healthy(kernel.layers)
+
+
+
+
+
+def test_a_rejected_verdict_is_falsey_but_still_present():
+    """`if verdict` asks "did it pass?", not "is there one?".
+
+    Conflating the two silently drops the reason from every rejection, which
+    is the most useful part of it.
+    """
+    from neuralmind.kernel import REJECTED, Verdict
+
+    verdict = Verdict(REJECTED, "p(X, Y) :- q(X).", "safety", "unbound Y")
+    assert not verdict
+    assert verdict is not None and verdict.check == "safety"

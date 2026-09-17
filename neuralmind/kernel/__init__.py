@@ -206,7 +206,7 @@ class Kernel:
             )
         if self.quarantine.holds(source):
             return self._record(
-                Outcome(False, reason=f"quarantined: {self.quarantine._items[source].reason}")
+                Outcome(False, reason=f"quarantined: {self.quarantine.why(source)}")
             )
 
         verdict = self.firewall.check(source, name)

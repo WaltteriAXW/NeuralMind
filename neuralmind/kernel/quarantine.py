@@ -96,6 +96,15 @@ class Quarantine:
         entry = self._items.get(str(item))
         return entry is not None and entry.active
 
+    def entry(self, item) -> Optional[Quarantined]:
+        """The record for an item, active or released, or None."""
+        return self._items.get(str(item))
+
+    def why(self, item) -> str:
+        """Why something is quarantined, for a message to a person."""
+        entry = self._items.get(str(item))
+        return entry.reason if entry is not None else ""
+
     def release(self, item, by: str) -> Quarantined:
         """Let something back in. Requires naming who decided that."""
         if not by:
