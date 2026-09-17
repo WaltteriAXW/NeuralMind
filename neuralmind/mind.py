@@ -29,6 +29,13 @@ to exist from the start or there is nothing to look back at.
 ``brief`` is one line under a word budget, with every clause traceable to a
 node of the proof. See :mod:`neuralmind.output.brief`.
 
+**A way back.** Everything the mind learns goes through the safety kernel
+(:mod:`neuralmind.kernel`): layered knowledge with a read-only core, a firewall
+on every rule, canaries checked after every change, and a transaction that
+leaves no trace when one fails. :meth:`learn` is the guarded path and there is
+no shorter one. :meth:`decide` puts every action through the autonomy gate,
+where caution rises on a guess and autonomy rises only on a grant.
+
 **More than one kind of reasoning.** :meth:`solve` goes through the workspace
 (:mod:`neuralmind.workspace`), where a logic engine, a constraint solver, a
 unit converter and a graph search meet on a blackboard. Each posts atoms with
@@ -123,8 +130,19 @@ class Mind:
         budget_ms: int = 20,
         seed: int = 0,
         realiser: Optional[Realiser] = None,
+        tenant: Optional[str] = None,
+        granted: int = 1,
     ) -> None:
-        self.knowledge = knowledge if knowledge is not None else KnowledgeBase("mind")
+        from .kernel import CONFIRMED, Kernel
+
+        #: The safety kernel. Its confirmed layer *is* :attr:`knowledge`, so
+        #: the ordinary paths keep working while everything guarded -- the
+        #: read-only core, the firewall, the canaries, the autonomy gate --
+        #: sits underneath rather than beside them.
+        self.kernel = Kernel("mind", tenant=tenant, granted=granted)
+        if knowledge is not None:
+            self.kernel.layers[CONFIRMED].knowledge = knowledge
+        self.knowledge = self.kernel.layers[CONFIRMED].knowledge
         self.budget_ms = budget_ms
         self.seed = seed
         self.realiser = realiser or Realiser()
@@ -146,9 +164,13 @@ class Mind:
 
     @property
     def engine(self) -> ReasoningEngine:
-        """The engine over everything currently known, rebuilt when it changes."""
+        """The engine over everything currently known, rebuilt when it changes.
+
+        "Everything known" is what the current mode can see: the sandbox is
+        excluded always, and a degraded mode sees less still.
+        """
         if self._engine is None:
-            self._engine = self.knowledge.engine()
+            self._engine = self.kernel.layers.engine(self.kernel.mode_layers)
         return self._engine
 
     @property
@@ -186,7 +208,7 @@ class Mind:
         """Put what is already known on the blackboard as given facts."""
         from .inference.proof import FACT, ProofNode
 
-        for record in self.knowledge.facts:
+        for record in self.kernel.layers.facts(self.kernel.mode_layers):
             self._workspace.post(
                 record.atom,
                 ProofNode(record.atom, FACT, confidence=None),
@@ -237,9 +259,41 @@ class Mind:
         return perception
 
     def add_rules(self, source: str) -> "Mind":
-        """Add rules in the logic language, including ``#open`` declarations."""
+        """Add rules directly. Use :meth:`learn` for anything the mind inferred.
+
+        This is the host's own channel: a rule written by a person who knows
+        the domain is not the same object as one a learner proposed, and making
+        the host pass the firewall to state its own policy would be theatre.
+        Anything the *mind* produced goes through :meth:`learn` instead.
+        """
         self.knowledge.add_rules(source)
         self._invalidate()
+        return self
+
+    def learn(self, source: str, name: str = "learned"):
+        """Add a rule the guarded way: firewall, snapshot, canaries, rollback.
+
+        Returns an :class:`~neuralmind.kernel.Outcome`, which is falsey when
+        the rule was refused and says which check refused it.
+        """
+        from .kernel import CONFIRMED
+
+        outcome = self.kernel.learn(source, CONFIRMED, name)
+        self._invalidate()
+        return outcome
+
+    def watch(self, goals: Iterable) -> "Mind":
+        """Record what the mind answers now, and defend it from future changes."""
+        self.kernel.watch(goals)
+        return self
+
+    def decide(self, action: str, needs: int = 2, confirmed: bool = False):
+        """Put an action through the autonomy gate. Nothing reaches a host unchecked."""
+        return self.kernel.decide(action, needs, confirmed)
+
+    def grant(self, level: int) -> "Mind":
+        """Set the autonomy ceiling. Only a host does this."""
+        self.kernel.autonomy.grant(level)
         return self
 
     def add_facts(self, facts: Iterable[Union[Atom, str, FactRecord]], **kwargs) -> "Mind":
@@ -316,12 +370,15 @@ class Mind:
             knowledge + ".",
         ]
         missing = sorted(name for name, ready in self.specialists().items() if not ready)
+        limits = []
+        if self.kernel.watchdog.mode.name != "full":
+            limits.append(self.kernel.watchdog.describe())
         if missing:
-            lines.append(
-                "Cannot: " + ", ".join(missing)
-                + f" question(s) — {'those specialists are' if len(missing) > 1 else 'that specialist is'}"
-                " not installed."
-            )
+            limits.append(", ".join(missing) + " not installed")
+        if len(self.kernel.quarantine):
+            limits.append(f"{len(self.kernel.quarantine)} rule(s) quarantined")
+        if limits:
+            lines.append("Cannot: " + "; ".join(limits) + ".")
         return " ".join(lines)
 
     def questions(self) -> list[str]:

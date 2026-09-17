@@ -108,6 +108,43 @@ On 50 hand-written mixed questions, all 50 are answered correctly within a
 10 ms budget, with a worst-case overshoot of 8.9%. Under a budget too small to
 finish, answers weaken to `unknown` — never to a wrong answer.
 
+## Learning without breaking
+
+A mind that learns will sometimes be wrong. It will induce a rule from two
+examples, or accept one that quietly contradicts something it already knew.
+That is not avoidable; letting it reach what the mind came with is.
+
+Knowledge is layered — **core** (shipped, read-only at runtime) → confirmed →
+tenant → session → **sandbox** (excluded from queries unless you ask). Every
+learned rule goes through a firewall (safety, stratification, consistency with
+the core, a budgeted dry run — all against a copy), inside a transaction, with
+canaries checked afterwards:
+
+```python
+mind.watch(["isa(bob, mammal)", "isa(bob, fish)"])     # capture what it answers now
+
+mind.learn("isa(X, animal) :- isa(X, mammal).")
+# accepted into confirmed
+
+mind.learn("isa(X, fish) :- isa(X, cat).")
+# rejected: a canary stopped agreeing: isa(bob, fish): expected no, got yes
+```
+
+Rejected rules are **quarantined with the reason and a repeat count**, never
+quietly deleted — one bad rule is an accident, the same one four times has a
+cause worth finding.
+
+Fed 10,000 random, malformed and contradictory inputs, the core stayed
+byte-identical and every canary kept its answer after every one.
+
+Two rules govern what the mind may *do*. Personal data is routed into a
+confined layer whatever the caller asks for, and cannot be promoted out of it.
+And autonomy is `min(what the host granted, what the stakes allow)` — stakes
+are inferred, so they can only ever lower it, and there is deliberately no way
+to lower stakes once raised. A guess that raises autonomy is how a misread
+observation authorises a transfer; a guess that lowers it is how one becomes
+annoying.
+
 ## Talk to it
 
 `neuralmind shell` is an interactive session — a REPL, not a chat interface,
@@ -231,6 +268,8 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *beyond the roadmap:* learn the rules from examples | recovers `grandparent`, recursive `ancestor`, and negated exceptions |
 | — | *the real benchmark:* ProofWriter corpus | **100%** on all five depth splits, 113,632 questions overall; see below |
 | — | *Phase Two, P2.0:* three-valued answers | **100%** on the open-world splits too, where 46% of answers are *unknown* |
+| — | *Phase Two, P2.1:* four kinds of reasoning, one proof | **50/50** mixed questions inside a 10 ms budget |
+| — | *Phase Two, P2.2:* learning that cannot break the core | **10,000** hostile inputs, core intact and canaries passing after every one |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.

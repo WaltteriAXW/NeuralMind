@@ -13,7 +13,7 @@ with no test is not done, whatever the code says.
 |---|---|---|
 | P2.0 — `Mind` facade and honest answers | One entry point, three-valued answers, short lines | **done** |
 | P2.1 — Workspace, specialists, controller | A place where kinds of reasoning meet | **done** |
-| P2.2 — Safety kernel | Explore without breaking; always a way back | not started |
+| P2.2 — Safety kernel | Explore without breaking; always a way back | **done** |
 | P2.3 — Growth loop | Notice gaps and close them | not started |
 | P2.4 — Self-model and context discovery | Work out where it is, and say so | not started |
 | P2.5 — Language that grows | Widen perception by correction | not started |
@@ -23,6 +23,86 @@ with no test is not done, whatever the code says.
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
 | P2.13 — The school | One command reproduces every number | not started |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.2 — the safety kernel
+
+This lands before the growth loop for the reason the roadmap gives: anything
+that changes itself needs a guaranteed way back, and building the changing part
+first would mean a period where there was none.
+
+### Eight mechanisms, one idea
+
+A mind that learns will be wrong sometimes. It will induce a rule from two
+examples, accept a pack that contradicts something it knew, read a sentence
+badly. None of that is avoidable. What is avoidable is letting any of it reach
+what the mind came with.
+
+| Module | What it stops |
+|---|---|
+| `layers` | core → confirmed → tenant → session → sandbox. The core is read-only at runtime; the sandbox is excluded from queries by default |
+| `snapshot` | a risky step commits or leaves no trace; an exception rolls back and re-raises |
+| `canaries` | questions with known answers, checked after every change — including `unknown → yes`, which is what an over-general rule does |
+| `firewall` | safety, stratification, consistency with the core, and a budgeted dry run, all against a **copy** |
+| `quarantine` | what failed is disabled with the reason and a repeat count, never quietly deleted |
+| `modes` | full → core only → observe only, stepping down on trouble and up only on evidence |
+| `autonomy` | L0–L3: `min(grant, stakes ceiling)`. Caution rises on a guess; autonomy rises only on a grant |
+| `privacy` | personal data routed into a confined layer, held for review when generalised, deleted on a retention sweep |
+
+`Kernel.learn()` wires them so the safe path is the short one — firewall,
+snapshot, canaries, rollback or quarantine — and there is no briefer way to add
+a learned rule that skips any of it.
+
+### The asymmetry that matters
+
+Stakes are inferred; grants come from the host. So stakes can only ever
+*lower* the level in force, and there is deliberately no API to lower stakes
+once raised. Guesswork that raises autonomy is a way for a misread observation
+to authorise a transfer; guesswork that lowers it is a way for a misread
+observation to be annoying. Those are not comparable risks, so one of them is
+impossible rather than unlikely.
+
+### Measured
+
+**Fuzz.** 10,000 random, malformed and contradictory inputs — junk bytes,
+unbalanced syntax, unsafe rules, recursive negation, contradictions with the
+core, over-general rules, runaway recursion. After every single one the core
+was byte-identical and every canary still gave its answer. See the table below.
+
+**A bad pack.** Injected with all three failure modes at once (an unsafe rule,
+a contradiction with the core, runaway recursion): each is quarantined with the
+check that caught it, and the mind keeps answering from the core.
+
+**Tenants.** Marker records planted in one tenant appear in no part of
+another's instance — not its answers, not its rules, not a snapshot of it.
+
+**Autonomy.** No action above the granted level reaches the host, and every
+decision is logged with which of the two bound it.
+
+### What it cost to get right
+
+- **`recover()` checked the wrong mode.** A degraded mode answers differently
+  on purpose: core-only cannot see the facts a canary was captured with, so
+  checking there said "still broken" forever and the mind never came back up.
+  The question that matters is whether the mode being stepped *into* is healthy.
+- **A rolled-back change was degrading the mode.** A canary failure the
+  rollback already fixed is the system working, not the system failing.
+  Stepping down is for a failure still present after the way back was taken —
+  otherwise one bad induced rule disabled learning entirely.
+- **The first fuzz harness tested the wrong claim.** It checked core-only
+  answers against canaries captured with facts from another layer, which fail
+  for a reason that has nothing to do with safety. "The core is read-only" is a
+  claim about the core's own text, and is now checked as that.
+
+### What P2.2 does not do
+
+- **No GLiNER entity typing.** `PrivacyPolicy` takes a detector and works
+  without one; host-declared predicates and a short list of patterns are the
+  default. Patterns find what they match — a host that knows its schema should
+  declare it rather than hope.
+- **Nothing stops a caller reaching past the kernel.** Python does not work
+  that way, and a kernel that claimed otherwise would be lying. What it does is
+  make the checked route the convenient one and everything it refuses visible.
+- **No packs yet.** `quarantine` handles rules; packs arrive with P2.14.
 
 ## P2.1 — the workspace
 

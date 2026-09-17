@@ -44,6 +44,20 @@ answers: running out of time yields `unknown` with the reason, never a hang.
 Every specialist but `logic` is optional, and a missing backend costs exactly
 its own questions.
 
+## 0c. The safety kernel (`neuralmind/kernel/`)
+
+Knowledge in five layers, core first and read-only at runtime, sandbox last and
+excluded from queries by default. Everything the mind *learns* goes through
+`Kernel.learn()`: firewall (safety, stratification, consistency with the core,
+a budgeted dry run — against a copy), inside a transaction, with canaries
+checked afterwards and a rollback plus quarantine when one fails.
+
+Two asymmetries are load-bearing. Personal data is routed into a confined layer
+whatever the caller asked for, because the caller asking for the wrong layer is
+the mistake the mechanism exists to stop. And autonomy is the *minimum* of the
+host's grant and what the inferred stakes allow, with no way to lower stakes —
+caution rises on a guess, freedom only on a grant.
+
 ## 1. Perception (`neuralmind/perception/`)
 
 The only place anything is learned. Its output is always
