@@ -174,8 +174,39 @@ impossible rather than unlikely.
 
 **Fuzz.** 10,000 random, malformed and contradictory inputs — junk bytes,
 unbalanced syntax, unsafe rules, recursive negation, contradictions with the
-core, over-general rules, runaway recursion. After every single one the core
-was byte-identical and every canary still gave its answer. See the table below.
+core, over-general rules, unbounded recursion. After every single one the core
+was byte-identical and every canary still gave its answer.
+
+| | |
+|---|---|
+| inputs | 10,000 in 3,858s |
+| accepted | 1,605 |
+| rejected | 8,395 |
+| quarantined | 5,839 |
+| core modified | **never** |
+| canary failures surviving a rollback | **none** |
+| final mode | `full` |
+
+Where the firewall caught things: parse 2,370, safety 2,059, stratification
+1,273, budget 107, consistency 3. The rest were caught by the canaries and
+rolled back, or refused outright because that exact rule was already
+quarantined.
+
+Two of those numbers repay a careful reading. **Consistency is only 3** because
+a rule that contradicts the core is quarantined on its first attempt and
+refused by name afterwards — the check runs once per distinct rule, not once
+per attempt. And the mode stayed **full** throughout: rolled-back changes do
+not degrade (see below), and one accepted rule clears the strike count, so a
+mind that is mostly succeeding does not step down for occasional failures.
+
+The run takes just over an hour, and almost all of it is the tail. The fuzz
+accepts 1,605 junk-but-valid rules, so by the end every check runs against a
+1,590-rule theory — the fuzz being adversarial about volume as well as
+content, not a cost a real session pays.
+
+```bash
+python benchmarks/fuzz_kernel.py    # exits non-zero on any breach
+```
 
 **A bad pack.** Injected with all three failure modes at once (an unsafe rule,
 a contradiction with the core, runaway recursion): each is quarantined with the

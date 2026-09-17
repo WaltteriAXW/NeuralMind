@@ -134,8 +134,11 @@ Rejected rules are **quarantined with the reason and a repeat count**, never
 quietly deleted — one bad rule is an accident, the same one four times has a
 cause worth finding.
 
-Fed 10,000 random, malformed and contradictory inputs, the core stayed
-byte-identical and every canary kept its answer after every one.
+Fed 10,000 random, malformed and contradictory inputs — junk bytes, unsafe
+rules, recursive negation, contradictions with the core, unbounded recursion —
+the core stayed **byte-identical** and every canary kept its answer after every
+single one. 1,605 got in, 8,395 were refused, 5,839 sit in quarantine with the
+reason recorded.
 
 ## Noticing what it doesn't know
 
