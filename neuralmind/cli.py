@@ -10,6 +10,7 @@
     neuralmind demo     run one of the roadmap phases end to end
     neuralmind eval     benchmark the pipeline and attribute its failures
                         (--corpus for the real ProofWriter data)
+    neuralmind school   run the whole curriculum and write the dashboard
     neuralmind verify   re-derive the model with clingo and compare
 """
 
@@ -150,6 +151,60 @@ def cmd_check(args) -> int:
                 print(render_proof(proof))
                 print()
     return 1 if violations else 0
+
+
+def cmd_school(args) -> int:
+    """Run the curriculum and write the dashboard."""
+    from .school import DASHBOARD, School
+
+    school = School()
+    if args.list:
+        print(f"{'stage':26} {'milestone':11} state")
+        for stage in school.curriculum:
+            why = stage.why_not()
+            print(f"  {stage.name:24} {stage.milestone:11} "
+                  f"{'runnable' if not why else why}")
+            print(f"  {'':24} {'':11} {stage.about}")
+        return 0
+
+    interactive = sys.stdout.isatty() and not args.json
+
+    def announce(stage) -> None:
+        # Only when someone is watching: redirected to a file, a carriage
+        # return leaves every stage name on one unreadable line.
+        if interactive:
+            print(f"  {stage.name} ...", end="\r", flush=True)
+
+    report = school.run(
+        quick=not args.full, only=args.stage or None, on_stage=announce
+    )
+    if args.json:
+        from .output.serialize import to_json
+
+        print(to_json(report.to_dict()))
+    else:
+        print(report.describe())
+
+    if not args.no_write:
+        path = School.write(report, args.out or DASHBOARD)
+        if not args.json:
+            print(f"\nwritten to {path}")
+            regressions = _read_regressions(path)
+            for entry in regressions:
+                print(
+                    f"  REGRESSION {entry['stage']}: "
+                    f"{entry['was']} -> {entry['now']}  {entry['detail']}"
+                )
+    return 0 if report.healthy else 1
+
+
+def _read_regressions(path) -> list:
+    import json
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("regressions", [])
+    except Exception:
+        return []
 
 
 def cmd_reason(args) -> int:
@@ -443,6 +498,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reason.add_argument("--json", action="store_true")
     reason.set_defaults(func=cmd_reason)
+
+    school = sub.add_parser(
+        "school", help="run the curriculum and write reports/school.json"
+    )
+    school.add_argument(
+        "--full", action="store_true",
+        help="every question and 10,000 fuzz inputs, rather than a quick pass",
+    )
+    school.add_argument(
+        "--stage", action="append", default=[],
+        help="run only this stage (repeatable)",
+    )
+    school.add_argument(
+        "--list", action="store_true", help="list the curriculum and stop"
+    )
+    school.add_argument("--out", type=Path, default=None)
+    school.add_argument(
+        "--no-write", action="store_true", help="do not touch the dashboard"
+    )
+    school.add_argument("--json", action="store_true")
+    school.set_defaults(func=cmd_school)
 
     verify = sub.add_parser("verify", help="re-derive the model with clingo and compare")
     _add_kb_arguments(verify)

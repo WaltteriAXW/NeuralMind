@@ -121,6 +121,13 @@ class Firewall:
             return self._record(Verdict(REJECTED, source, "stratification", _brief(exc)))
         except ProgramError as exc:
             return self._record(Verdict(REJECTED, source, "safety", _brief(exc)))
+        except Exception as exc:
+            # A firewall that can be made to raise is not one. Whatever went
+            # wrong while checking, the rule does not get in, and the reason
+            # is recorded rather than reaching the caller as a crash.
+            return self._record(
+                Verdict(REJECTED, source, "safety", f"could not be checked: {_brief(exc)}")
+            )
 
         # 3 and 4: solve it, under a limit, and look at what came out.
         from ..inference.forward import ForwardChainer, ReasoningLimit

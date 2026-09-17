@@ -92,6 +92,31 @@ switch. `SelfModel` holds the mind's facts about itself in the same vocabulary
 as everything else, which is the whole of what "self-awareness" means here and
 why it is testable.
 
+## 0f. The school (`neuralmind/school/`)
+
+`neuralmind school` is one command that reproduces every number this project
+claims. Fifteen stages in dependency order, each carrying the target it must
+beat; ten run today and five report *why* they cannot rather than being absent.
+
+Two structural choices carry the weight. Stages **gate**: `after` names the
+prerequisites, and a stage whose prerequisite failed comes back `blocked` with
+the blocker named, because a downstream score from a broken upstream is noise.
+And every failure gets **exactly one attribution**, from
+`school/attribution.py` — seven categories in upstream-first order
+(engine → budget → specialist → wrong_context → perception →
+missing_knowledge → missing_rule). The order *is* the design: a timed-out
+question also has an unproved goal, and counting it twice is how a report ends
+up recommending you write rules when a specialist is simply slow.
+
+Runs append to `reports/school.json` — twenty kept, with a `regressions` list
+that names any stage that scored worse than last time, so a regression fails by
+name.
+
+Running the stages in one process against one accumulated state finds things no
+single test file can: the first run surfaced a grounder crash reachable only
+because the fuzz stage had accepted an arithmetic rule that the growth stage's
+constants then grounded against.
+
 ## 1. Perception (`neuralmind/perception/`)
 
 The only place anything is learned. Its output is always

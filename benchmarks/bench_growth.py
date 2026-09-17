@@ -13,23 +13,7 @@ right direction for it to work in.
 from neuralmind import KnowledgeBase, ReasoningEngine
 from neuralmind.growth.loop import GrowthLoop
 
-FACTS = """
-parent(maria, juho). parent(maria, liisa). parent(matti, juho). parent(matti, liisa).
-parent(juho, aino).  parent(juho, eero).  parent(liisa, sanna).
-parent(aino, taavi). parent(sanna, venla).
-male(matti). male(juho). male(eero). male(taavi).
-female(maria). female(liisa). female(aino). female(sanna). female(venla).
-"""
-SIBLING = "sibling(X, Y) :- parent(P, X), parent(P, Y), X != Y."
-TARGETS = {
-    "grandparent/2": ("", "grandparent(X, Z) :- parent(X, Y), parent(Y, Z)."),
-    "sibling/2": ("", SIBLING),
-    "aunt/2": (SIBLING, "aunt(X, Y) :- parent(P, Y), sibling(X, P), female(X)."),
-    "ancestor/2": (
-        "",
-        "ancestor(X, Y) :- parent(X, Y). ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).",
-    ),
-}
+from neuralmind.growth.family import FACTS, TARGETS
 
 totals = {"active": 0, "random": 0}
 print(f"{'target':14} {'strategy':9} {'asked':>6} {'settled':>8} {'correct':>8}  definition")

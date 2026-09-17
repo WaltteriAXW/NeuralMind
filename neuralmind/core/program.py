@@ -409,7 +409,16 @@ class Program:
             for assignment in itertools.product(universe, repeat=len(names)):
                 subst = dict(zip(names, assignment))
                 head = rule.head.ground(subst) if rule.head is not None else None
-                body = tuple(_ground_part(part, subst) for part in rule.body)
+                try:
+                    body = tuple(_ground_part(part, subst) for part in rule.body)
+                except ValueError:
+                    # An instance whose arithmetic is nonsense -- "bob + 1" --
+                    # is not a rule instance at all: it can never fire, so the
+                    # grounding simply does not contain it. Raising instead
+                    # would abort the whole check over one impossible
+                    # substitution, and take with it every *other* rule that
+                    # was being stratified.
+                    continue
                 grounded.append(
                     Rule(head, body, source=rule.source, line=rule.line, label=rule.label)
                 )

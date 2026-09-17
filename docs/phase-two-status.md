@@ -21,8 +21,166 @@ with no test is not done, whatever the code says.
 | P2.7 — Action, time and goals | Decide, not just answer | not started |
 | P2.8 — Guided module building | No pack fits? Draft one | not started |
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
-| P2.13 — The school | One command reproduces every number | not started |
+| P2.13 — The school | One command reproduces every number | **done** |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.13 — the school
+
+By P2.4 the numbers this project claims lived in five places: a fuzz harness, a
+growth benchmark, two `eval` invocations and an intent training script. A set of
+figures you have to reassemble by hand is a set of figures that quietly stops
+being true. So: one command.
+
+```
+neuralmind school            # the quick pass, about 36 seconds
+neuralmind school --full     # every question and 10,000 fuzz inputs
+```
+
+### The quick pass
+
+```
+curriculum: 10 passed, 0 failed, 5 unavailable, 0 blocked (quick, 36s)
+
+  proofwriter-cwa            ok      100.0% (need 99.9%)  1,408/1,408 questions, 0 engine failure(s)
+  proofwriter-owa            ok      100.0% (need 99.9%)  1,456 questions, 45% of gold answers are unknown
+  proofwriter-natlang        ok       72.9% (need 68.0%)  1,004 questions; the ceiling is perception, not reasoning
+  mixed-specialists          ok      100.0% (need 100.0%)  50 questions inside a 10ms budget, one proof each
+  kernel-fuzz                ok   100.0% intact (need 100.0% intact)  300 hostile inputs, 180 quarantined
+  growth-by-asking           ok   68.3% saved (need 50.0% saved)  2/2 learned correctly; active 19 vs random 60 question(s)
+  service-intents            ok   50.5% rejected (need 40.0% rejected)  200 out-of-scope utterances; banking family 90%
+  where-am-i                 ok      100.0% (need 100.0%)  9 unlabelled hosts
+  context-drift              ok      100.0% (need 100.0%)  noticed the host change after 4 observation(s)
+  mnist-weak-supervision     ok       97.5% (need 95.0%)  2,000 digits, from a model trained with no digit labels at all
+  babi                       —        unavailable: no reachable mirror of the bAbI tasks
+  entailment-bank            —        unavailable: not downloaded; no importer written yet
+  babyai                     —        unavailable: minigrid is not installed (pip install neuralmind[games])
+  textworld                  —        unavailable: textworld is not installed (pip install neuralmind[games])
+  build-a-module             —        unavailable: the module builder is P2.8 and is not built
+
+failures by cause, most upstream first:
+  perception              272   the text layer extracted the wrong symbols
+```
+
+Every stage carries the target it has to beat, so "ok" is a comparison and not
+an opinion. `--full` widens the same stages: all CWA test splits (113,632
+questions), the full NatLang set, and the 10,000-input fuzz run — about an hour,
+mostly the fuzz.
+
+### Three things a plain test suite does not do
+
+**It gates.** There is no information in a NatLang score from a mind that
+cannot do generated ProofWriter, so that stage does not run until the earlier
+one passes, and a blocked stage names the stage that blocked it. `unavailable`
+deliberately does *not* block: a missing dataset should not hide a stage that
+would otherwise run.
+
+**It says what it cannot do.** Five stages are listed precisely because they
+cannot run. A curriculum that omits what it cannot reach reports a smaller,
+better-looking mind than the one that exists — and the five reasons are four
+different kinds of problem (no mirror, no importer, no dependency, not built
+yet), which is information a silence would throw away.
+
+**Every failure has exactly one attribution.** Seven categories, and the
+*order* is the design:
+
+| # | Category | What it means | Remedy |
+|---|---|---|---|
+| 1 | `engine` | the reasoner disagreed with a gold answer it should have got | fix the engine — nothing downstream matters |
+| 2 | `budget` | the answer ran out of time | raise the budget or speed the specialist |
+| 3 | `specialist` | no specialist accepted the subgoal | write or enable one |
+| 4 | `wrong_context` | the theory or question did not match the host | fix context discovery |
+| 5 | `perception` | the text layer extracted the wrong symbols | widen the readers |
+| 6 | `missing_knowledge` | a fact nobody supplied | supply it, or ask |
+| 7 | `missing_rule` | the rules stalled short of the goal | learn or write the rule |
+
+A failure usually looks like several of these at once. A question that ran out
+of budget *also* has an unproved goal, so it *also* looks like a missing rule —
+and counting it in both places is how a report ends up recommending you write
+rules when the real problem is a slow specialist. Priority order makes "exactly
+one attribution" a claim about which cause is furthest upstream, not a claim
+that causes never overlap. Engine failures come first because an engine that is
+wrong makes every number below it meaningless.
+
+### The dashboard
+
+Each run appends to `reports/school.json`, which keeps the last twenty runs and
+a `regressions` list naming any stage that scored worse than its previous run.
+A regression fails **by name**, rather than by someone noticing a table looks
+different. The file survives being corrupt or truncated — a broken dashboard
+starts a new history instead of taking the curriculum down with it.
+
+### It found a real bug on its first run
+
+This is the strongest argument for having built it. The first end-to-end run
+crashed:
+
+```
+ValueError: arithmetic on non-numeric terms: bob + 1
+```
+
+Nothing in the growth stage does arithmetic on people. What happened: an earlier
+fuzz stage had a rule `n(Y) :- n(X), Y = X + 1.` accepted into a layer. A later
+unstratified *candidate* forced `local_strata()`, which grounds the whole merged
+program — and there, `n(Y) :- n(X), Y = X + 1.` grounds against `bob`, a
+constant from the family fixture, and the grounder raised.
+
+Fixed in two places, because the bug is two bugs:
+
+- `Program.ground()` now skips an instance whose arithmetic cannot be evaluated.
+  An instance that can never fire is not part of the grounding, and raising over
+  it is the grounder having an opinion about a rule it was only enumerating.
+- `Firewall.check` now catches bare `Exception`. A firewall that can be made to
+  raise is not a firewall — a rule that crashes the checker has to come back
+  `rejected`, not as a traceback in the caller.
+
+Neither stage alone reaches this. Only running them in one process, in order,
+against one accumulated state does — which is what a curriculum is for and what
+15 separate test files were never going to find.
+
+### And then a bare environment found two more
+
+Running the same curriculum in a virtualenv with nothing installed but the
+standard library was the second most useful thing the school did:
+
+```
+curriculum: 6 passed, 0 failed, 9 unavailable, 0 blocked (quick, 31s)
+```
+
+Before the fixes it was `6 passed, 1 failed, 7 unavailable, 1 blocked` — and
+both of those numbers were lies.
+
+- **An availability check raised instead of reporting.** `_mnist_available`
+  imported the loader before asking whether NumPy was installed, and the loader
+  imports NumPy at module level. So in the one environment the check exists for,
+  it threw — and took down the listing of what *else* could have run, which is
+  the whole point of the school. `Stage.why_not()` now wraps every check and
+  turns an exception into the reason, because a check is the likeliest thing in
+  the curriculum to blow up: finding out whether a dependency is there means
+  importing something.
+- **Two stages reported a number that meant something different.**
+  `mixed-specialists` scored 34% with three of its four backends absent, and
+  `proofwriter-natlang` scored 51.7% instead of 72.9% with no spaCy. Both read
+  as "the mind cannot do this" when the truth was "pint is not installed". A
+  measurement whose meaning depends on the environment is worse than no
+  measurement, so both stages now declare what they need and step aside.
+
+That second one is a rule worth stating plainly: **a stage either measures the
+thing it claims to measure, or it is unavailable.** There is no third state
+where it measures something else and reports the number anyway.
+
+### What P2.13 does not do
+
+- **Five stages are declared, not run.** bAbI has no reachable mirror from this
+  machine; EntailmentBank's repo is reachable but has no importer; BabyAI and
+  TextWorld need packages that are not installed; the module builder is P2.8.
+- **`--full` is not run on every commit.** An hour is too long for that, so the
+  quick pass is the gate and the full numbers are reproduced deliberately.
+- **Targets are floors, not contracts.** A stage that beats its target by a
+  large margin is not flagged, so a target that has gone stale stays stale until
+  someone raises it.
+- **Nine of fifteen stages are unavailable in a bare environment.** That is
+  honest rather than good. The quick pass is only a real gate where the optional
+  dependencies are installed.
 
 ## P2.4 — working out where it is
 

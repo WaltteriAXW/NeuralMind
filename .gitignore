@@ -12,3 +12,4 @@ data/contexts/
 data/*.gz
 data/*.npz
 *.ipynb_checkpoints
+reports/

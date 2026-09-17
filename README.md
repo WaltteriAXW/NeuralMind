@@ -347,9 +347,60 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *Phase Two, P2.2:* learning that cannot break the core | **10,000** hostile inputs, core intact and canaries passing after every one |
 | — | *Phase Two, P2.3:* growing by asking | family relations incl. recursive `ancestor` learned in **11%** of random's questions |
 | — | *Phase Two, P2.4:* never told where it is | **9 unlabelled hosts** read correctly; stakes raised before any domain is recognised |
+| — | *Phase Two, P2.13:* one command reproduces every number | **10 stages pass** their targets, 5 declared unavailable with reasons; see below |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
+
+## Reproducing all of it: the school
+
+```bash
+neuralmind school            # the quick pass, about 36 seconds
+neuralmind school --full     # every question and 10,000 fuzz inputs, about an hour
+```
+
+An ordered curriculum of fifteen stages, each carrying the target it must beat,
+each gated on the ones before it:
+
+```
+curriculum: 10 passed, 0 failed, 5 unavailable, 0 blocked (quick, 36s)
+
+  proofwriter-cwa            ok      100.0% (need 99.9%)  1,408/1,408 questions, 0 engine failure(s)
+  proofwriter-owa            ok      100.0% (need 99.9%)  1,456 questions, 45% of gold answers are unknown
+  proofwriter-natlang        ok       72.9% (need 68.0%)  1,004 questions; the ceiling is perception, not reasoning
+  mixed-specialists          ok      100.0% (need 100.0%)  50 questions inside a 10ms budget, one proof each
+  kernel-fuzz                ok   100.0% intact (need 100.0% intact)  300 hostile inputs, 180 quarantined
+  growth-by-asking           ok   68.3% saved (need 50.0% saved)  2/2 learned correctly; active 19 vs random 60 question(s)
+  service-intents            ok   50.5% rejected (need 40.0% rejected)  200 out-of-scope utterances; banking family 90%
+  where-am-i                 ok      100.0% (need 100.0%)  9 unlabelled hosts
+  context-drift              ok      100.0% (need 100.0%)  noticed the host change after 4 observation(s)
+  mnist-weak-supervision     ok       97.5% (need 95.0%)  2,000 digits, from a model trained with no digit labels at all
+  babi                       —        unavailable: no reachable mirror of the bAbI tasks
+  ...
+
+failures by cause, most upstream first:
+  perception              272   the text layer extracted the wrong symbols
+```
+
+Three things it does that the test suite does not. It **gates**, so a NatLang
+score from a mind that cannot do generated ProofWriter is never reported. It
+**says what it cannot do** — five stages appear precisely because they cannot
+run, with the reason for each. And every failure gets **exactly one
+attribution**, from seven categories in upstream-first order, so a question that
+timed out is counted as a budget failure and not also as a missing rule.
+
+It earned its keep immediately. The first end-to-end run crashed with
+`arithmetic on non-numeric terms: bob + 1` — a rule accepted by the fuzz stage
+grounding against a constant from the growth stage, escaping the firewall as a
+traceback. No single stage reaches that. Running the same curriculum in a
+virtualenv with nothing installed then found two more: an availability check
+that raised instead of reporting, and two stages that scored a number meaning
+something quite different when their optional backends were missing.
+`docs/phase-two-status.md` has the whole story and the fixes.
+
+Runs append to `reports/school.json`, which keeps the last twenty and names any
+stage that scored worse than last time. `examples/12_the_school.py` walks
+through the gating and the attribution chain from Python.
 
 ## Learning through the logic
 
