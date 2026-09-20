@@ -18,11 +18,198 @@ with no test is not done, whatever the code says.
 | P2.4 — Self-model and context discovery | Work out where it is, and say so | **done** |
 | P2.5 — Language that grows | Widen perception by correction | not started |
 | P2.6 — Background knowledge as defaults | The obvious facts text never states | not started |
-| P2.7 — Action, time and goals | Decide, not just answer | not started |
+| P2.7 — Action, time and goals | Decide, not just answer | **done** |
 | P2.8 — Guided module building | No pack fits? Draft one | not started |
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
 | P2.13 — The school | One command reproduces every number | **done** |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.7 — deciding, not just answering
+
+Everything before this could tell you whether something was true. This works
+out what to do about it. The gap is wider than it looks: an answer that is
+wrong is a wrong answer, while an action that is wrong has already happened.
+
+### What it comes to
+
+| Bar (from the roadmap) | Result |
+|---|---|
+| BabyAI GoTo, PickUp, Open at ≥ 90% each, with an explained plan | **100% / 100% / 100%**, 150 episodes per level |
+| TextWorld "simple" games completed | **30/30** generated games |
+| …learning at least one action rule from failed attempts | **30/30 won with a condition removed**; 5 games ended naming the missing condition |
+| Replanning after an unexpected observation, door locking mid-plan | a named test, plus 1.19 replans per BabyAI Open episode |
+
+BabyAI is run on **the agent's own 7×7 view, not the whole grid**. That is the
+setting the benchmark poses, and it is also the only one that exercises any of
+this: with the full grid nothing is ever a surprise, so the replanning never
+runs. `--view full` exists so the difference can be measured rather than
+argued about.
+
+### An action says what it needs and what it changes
+
+```
+% Opening a valve needs it closed, and makes it open.
+action open_valve(V):
+    needs  valve(V), closed(V), not locked(V)
+    causes open(V), -closed(V)
+```
+
+`-closed(V)` is the strong negation the engine already had: opening a valve
+causes it to be open and causes it *not* to be closed, which is how the domain
+expert says it out loud. Everything else is derived rather than declared —
+**which predicates change is read off the effects**, so `valve(v1)` is a fixed
+fact and `closed(v1)` is a fact about right now, and nobody had to keep a list
+in step with the rules.
+
+### Every step says what it is for
+
+A list of actions is an answer you have to take on trust. What makes a plan
+inspectable is the causal link:
+
+```
+3 step(s), cost 3, found at horizon 3 in 12ms
+  1. unlock(v1)
+       clears locked(v1), which open_valve(v1) needs out of the way
+  2. open_valve(v1)
+       gives open(v1), which vent(v1) needs
+  3. vent(v1)
+       gives vented(v1), which the goal asks for
+```
+
+Links are computed by simulating the plan forward, so they cannot disagree
+with it — the property the proof trees have over the rules. A step nothing
+depends on is reported rather than left in, and that check earned its place
+immediately: the first version only tracked *positive* links, so `unlock`,
+whose entire purpose is to remove something, came back as "no reason".
+
+The proof for a step bottoms out in what was observed:
+
+```
+open_valve(v1)  [do]
+├── closed(v1)  [given]
+└── not locked(v1)
+    └── unlock(v1)  [do]  (the key is on the panel)
+        └── locked(v1)  [given]
+```
+
+### A plan is a proposal, not a permission
+
+Every step goes through P2.2's autonomy gate, and **the level a step needs is
+inferred from whether the library can undo it**. An action whose changes
+something else can put back is reversible; one with no way back needs a person.
+The mind works that out by reading its own action library:
+
+```
+what I may do:
+  unlock(v1)                   ok  (answering is within the granted level)
+  open_valve(v1)               ok  (answering is within the granted level)
+  vent(v1)                     needs a person  (L2 needed, the host granted L1)
+
+brief: Unlock v1, then 2 more steps — to make vented(v1) true.
+       I can do the first 2; vent(v1) needs you.
+```
+
+Permission stops at the *first* blocked step, because a plan is ordered and
+permission for step 3 without permission for step 2 is permission for nothing.
+The inference only ever adds caution: it raises what a step requires, never
+what the host granted, for the same reason stakes work that way.
+
+### Three outcomes, not two
+
+The planner grows the horizon one step at a time and keeps apart:
+
+- a plan;
+- **no plan of this length** — every shorter length ruled out, so stop looking;
+- **ran out of time** — a plan of that length may still exist.
+
+Collapsing the last two is how a planner ends up claiming a search space is
+empty when it only ran out of patience. There is a fourth, answered before any
+search: a goal no action could ever establish says so instantly, rather than
+sending someone to try a longer horizon that does not exist.
+
+### Exploring is a goal, not a special case
+
+An agent that cannot see the red key cannot plan to stand in front of it, and
+the usual answer is a hand-written wander. Here the fallback is another goal —
+stand somewhere that borders a cell nobody has looked at:
+
+```
+frontier(X, Y) :- seen(X, Y), ahead(X, Y, D, X2, Y2), not seen(X2, Y2).
+```
+
+so exploring produces a plan with reasons like everything else.
+
+### Learning what an action really needs
+
+Given a model that says a shut container can be emptied — the single most
+natural thing to leave out, because "take the teapot from the refrigerator" is
+one action in English — the mind is refused, and works out why:
+
+```
+won in 4 command(s), 1 rejected, learned 1
+  take teapot from refrigerator      ← refused, nothing changed
+  open refrigerator                  ← an experiment, not part of any plan
+  take teapot from refrigerator
+  put teapot on chair
+learned: take_from also needs opened(C)
+         (1 failure explained, explains every failure; held in 1 success)
+```
+
+Three things make this work rather than merely fire:
+
+- **Candidates are lifted onto the action's own arguments.** A fact about a
+  lamp in another room cannot become a precondition of `take_from`, however
+  well it correlates. That filter is why *one* success is enough evidence.
+- **The lesson is usually drawn on a success, not on the failure.** It is the
+  working case that says which of the differences mattered, so the learner is
+  asked after every attempt rather than only after a refusal.
+- **A refused command is not retried.** Repeating it is not persistence, it is
+  a loop — the first version typed `take teapot from refrigerator` forty times.
+  When nothing can be concluded yet, the mind tries something possible that it
+  has not tried, nearest the failure first, because that is what produces the
+  success the lesson needs.
+
+Preconditions only, deliberately. A missing precondition shows up as a failure,
+which is observable; a missing *effect* shows up as something true that nobody
+predicted, which anything else in the world may have caused. Effects are P2.8's
+problem, where there is a developer to ask.
+
+### What it cost to get right
+
+- **Effects may only mention the action's own parameters.** `forward` that moves
+  the agent to `Y` where `Y` came from a precondition leaves nothing in
+  `forward` to say which `Y`, so the generated rule loses the binding silently.
+  Refused now, with the fix in the message: write `forward(X, Y)`.
+- **The visibility cone is rotated.** MiniGrid hands out the agent's view facing
+  the agent, so reading it as grid-aligned works only when the agent happens to
+  face east. Three seeds in four failed, and it looked like bad luck.
+- **A goal literal over a fixed fact can never be in `holds`.** TextWorld quests
+  name the key that fits the box as part of winning. Sending that to the solver
+  made every horizon unsatisfiable, and the planner then reported — at length,
+  and with total confidence — that no plan existed.
+- **A state constraint means a step can achieve something it does not add.**
+  "I am in front of the key" follows from where you are and which way you face;
+  no action causes it. A link builder that reads only effect lists calls the
+  step that did it purposeless.
+- **The experiment picker chose the action that had just failed.** It ranks by
+  similarity to the failure, and nothing is more similar to a failed action
+  than itself.
+- **TextWorld holds `locked` and `closed` as alternatives, not layers.** Unlocking
+  a box makes it closed. Modelling it as merely "not locked" left the planner
+  unable to then open it.
+
+### What P2.7 does not do
+
+- **It does not read TextWorld's prose.** The goal is taken from the structured
+  quest condition. TextWorld states its objective in several sentences of
+  generated English, and reading that is P2.5's problem; BabyAI is where the
+  English-to-goal path is exercised, on every episode.
+- **No time beyond step order.** Fluents change from one step to the next, which
+  is enough for these environments and is not durations, deadlines or
+  concurrency.
+- **The action model is learned, the effect model is not.** See above.
+- **Planning needs clingo.** The Python engine derives; it deliberately does not
+  search. Without clingo, planning reports that rather than degrading.
 
 ## P2.13 — the school
 
@@ -39,7 +226,7 @@ neuralmind school --full     # every question and 10,000 fuzz inputs
 ### The quick pass
 
 ```
-curriculum: 10 passed, 0 failed, 5 unavailable, 0 blocked (quick, 36s)
+curriculum: 12 passed, 0 failed, 3 unavailable, 0 blocked (quick, 89s)
 
   proofwriter-cwa            ok      100.0% (need 99.9%)  1,408/1,408 questions, 0 engine failure(s)
   proofwriter-owa            ok      100.0% (need 99.9%)  1,456 questions, 45% of gold answers are unknown
@@ -53,8 +240,8 @@ curriculum: 10 passed, 0 failed, 5 unavailable, 0 blocked (quick, 36s)
   mnist-weak-supervision     ok       97.5% (need 95.0%)  2,000 digits, from a model trained with no digit labels at all
   babi                       —        unavailable: no reachable mirror of the bAbI tasks
   entailment-bank            —        unavailable: not downloaded; no importer written yet
-  babyai                     —        unavailable: minigrid is not installed (pip install neuralmind[games])
-  textworld                  —        unavailable: textworld is not installed (pip install neuralmind[games])
+  babyai                     ok   100.0% solved (need 90.0% solved)  40 episodes per level, agent's own view; goto 100%, pickup 100%, open 100%
+  textworld                  ok   100.0% won (need 90.0% won)  8 generated games; with the model given, 100%; with a condition missing, 100%
   build-a-module             —        unavailable: the module builder is P2.8 and is not built
 
 failures by cause, most upstream first:
@@ -74,11 +261,13 @@ one passes, and a blocked stage names the stage that blocked it. `unavailable`
 deliberately does *not* block: a missing dataset should not hide a stage that
 would otherwise run.
 
-**It says what it cannot do.** Five stages are listed precisely because they
+**It says what it cannot do.** Three stages are listed precisely because they
 cannot run. A curriculum that omits what it cannot reach reports a smaller,
-better-looking mind than the one that exists — and the five reasons are four
-different kinds of problem (no mirror, no importer, no dependency, not built
-yet), which is information a silence would throw away.
+better-looking mind than the one that exists — and the reasons are three
+different kinds of problem (no reachable mirror, no importer written, not built
+yet), which is information a silence would throw away. There were five when
+this milestone landed; P2.7 turned two of them into measurements, which is what
+a declared-unavailable stage is for.
 
 **Every failure has exactly one attribution.** Seven categories, and the
 *order* is the design:
@@ -170,17 +359,17 @@ where it measures something else and reports the number anyway.
 
 ### What P2.13 does not do
 
-- **Five stages are declared, not run.** bAbI has no reachable mirror from this
-  machine; EntailmentBank's repo is reachable but has no importer; BabyAI and
-  TextWorld need packages that are not installed; the module builder is P2.8.
+- **Three stages are declared, not run.** bAbI has no reachable mirror from
+  this machine; EntailmentBank's repo is reachable but has no importer; the
+  module builder is P2.8. (BabyAI and TextWorld were two more until P2.7.)
 - **`--full` is not run on every commit.** An hour is too long for that, so the
   quick pass is the gate and the full numbers are reproduced deliberately.
 - **Targets are floors, not contracts.** A stage that beats its target by a
   large margin is not flagged, so a target that has gone stale stays stale until
   someone raises it.
-- **Nine of fifteen stages are unavailable in a bare environment.** That is
-  honest rather than good. The quick pass is only a real gate where the optional
-  dependencies are installed.
+- **Most stages are unavailable in a bare environment.** That is honest rather
+  than good. The quick pass is only a real gate where the optional dependencies
+  are installed.
 
 ## P2.4 — working out where it is
 

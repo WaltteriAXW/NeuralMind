@@ -347,10 +347,75 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *Phase Two, P2.2:* learning that cannot break the core | **10,000** hostile inputs, core intact and canaries passing after every one |
 | — | *Phase Two, P2.3:* growing by asking | family relations incl. recursive `ancestor` learned in **11%** of random's questions |
 | — | *Phase Two, P2.4:* never told where it is | **9 unlabelled hosts** read correctly; stakes raised before any domain is recognised |
+| — | *Phase Two, P2.7:* decides, not just answers | BabyAI GoTo/PickUp/Open **100%** each with explained plans; TextWorld **30/30**, and **30/30** again with a condition removed from its action model |
 | — | *Phase Two, P2.13:* one command reproduces every number | **10 stages pass** their targets, 5 declared unavailable with reasons; see below |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
 breaks a milestone fails by name.
+
+## Deciding, not just answering
+
+```python
+from neuralmind.agency import Agency
+
+agency = Agency().learn_actions("""
+action open_valve(V):
+    needs  valve(V), closed(V), not locked(V)
+    causes open(V), -closed(V)
+
+action vent(V):
+    needs  valve(V), open(V)
+    causes vented(V)
+""")
+agency.observe(["valve(v1)", "closed(v1)"])
+choice = agency.decide("vented(v1)")
+```
+
+```
+2 step(s), cost 2, found at horizon 2 in 12ms
+  1. open_valve(v1)
+       gives open(v1), which vent(v1) needs
+  2. vent(v1)
+       gives vented(v1), which the goal asks for
+
+brief: Open valve v1, then 1 more step — to make vented(v1) true.
+       I can do the first 1; vent(v1) needs you.
+```
+
+Three things are going on in those eight lines.
+
+**Every step says what it is for.** The links are computed by simulating the
+plan forward, so they cannot disagree with it — and a step nothing depends on
+is reported rather than left in.
+
+**Which predicates change is inferred, not declared.** `valve(v1)` is a fixed
+fact and `closed(v1)` is a fact about right now, because `closed` appears in an
+effect and `valve` does not. Nobody keeps a list in step with the rules.
+
+**`vent` waits for a person, and nobody said so.** Nothing in the library can
+put back what venting changes, so the mind reads its own action library, finds
+no way back, and asks. The inference only ever adds caution — it raises what a
+step requires, never what the host granted.
+
+The planner grows its horizon one step at a time and keeps three outcomes
+apart: a plan, *no plan of this length* (stop looking), and *ran out of time*
+(a plan may still exist). Collapsing the last two is how a planner claims a
+search space is empty when it only ran out of patience.
+
+In environments, with the agent's own partial view rather than the whole grid:
+
+| | Result |
+|---|---|
+| BabyAI GoTo / PickUp / Open | **100% / 100% / 100%** (150 episodes each) |
+| TextWorld simple games | **30/30** |
+| …with a precondition removed from the action model | **30/30**, and 5 games ended naming the condition that was missing |
+
+That last row is the one worth reading twice. Told that a shut container can
+be emptied — the most natural thing to get wrong, since "take the teapot from
+the refrigerator" is one action in English — the mind is refused, experiments,
+and comes out of the game knowing `take_from also needs opened(C)`.
+
+`examples/13_deciding_not_just_answering.py` walks through all of it.
 
 ## Reproducing all of it: the school
 
@@ -363,7 +428,7 @@ An ordered curriculum of fifteen stages, each carrying the target it must beat,
 each gated on the ones before it:
 
 ```
-curriculum: 10 passed, 0 failed, 5 unavailable, 0 blocked (quick, 36s)
+curriculum: 12 passed, 0 failed, 3 unavailable, 0 blocked (quick, 89s)
 
   proofwriter-cwa            ok      100.0% (need 99.9%)  1,408/1,408 questions, 0 engine failure(s)
   proofwriter-owa            ok      100.0% (need 99.9%)  1,456 questions, 45% of gold answers are unknown
@@ -375,6 +440,8 @@ curriculum: 10 passed, 0 failed, 5 unavailable, 0 blocked (quick, 36s)
   where-am-i                 ok      100.0% (need 100.0%)  9 unlabelled hosts
   context-drift              ok      100.0% (need 100.0%)  noticed the host change after 4 observation(s)
   mnist-weak-supervision     ok       97.5% (need 95.0%)  2,000 digits, from a model trained with no digit labels at all
+  babyai                     ok   100.0% solved (need 90.0% solved)  goto 100%, pickup 100%, open 100%
+  textworld                  ok   100.0% won (need 90.0% won)  with a condition missing from the action model, 100%
   babi                       —        unavailable: no reachable mirror of the bAbI tasks
   ...
 
@@ -384,7 +451,7 @@ failures by cause, most upstream first:
 
 Three things it does that the test suite does not. It **gates**, so a NatLang
 score from a mind that cannot do generated ProofWriter is never reported. It
-**says what it cannot do** — five stages appear precisely because they cannot
+**says what it cannot do** — three stages appear precisely because they cannot
 run, with the reason for each. And every failure gets **exactly one
 attribution**, from seven categories in upstream-first order, so a question that
 timed out is counted as a budget failure and not also as a missing rule.

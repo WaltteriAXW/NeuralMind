@@ -10,13 +10,14 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from ..inference.model import Model, Violation
-from ..inference.proof import CLOSED_WORLD, FACT, SPECIALIST, ProofNode
+from ..inference.proof import ACTION, CLOSED_WORLD, FACT, SPECIALIST, ProofNode
 
 __all__ = ["render_proof", "render_model", "render_violations"]
 
 _MARKERS = {
     FACT: "[given]",
     CLOSED_WORLD: "[not derivable]",
+    ACTION: "[do]",
 }
 
 
@@ -58,6 +59,13 @@ def _label(node: ProofNode) -> str:
         text = f"{text}  {marker}"
     if node.confidence is not None:
         text = f"{text}  (confidence {node.confidence:.2f})"
+    if node.kind == ACTION:
+        # An action node is not something that is true, it is something to
+        # do -- and what makes it inspectable is the definition it came from,
+        # the same way a specialist's arithmetic is.
+        if node.rule_label:
+            text = f"{text}  ({node.rule_label})"
+        return text
     if node.kind == SPECIALIST:
         # A specialist's step is the interesting part -- "3.2 kN <= 5.0 kN"
         # says why, where the specialist's name alone only says who.

@@ -161,8 +161,24 @@ class Mind:
         self._controller = None
         self._context = None
         self._self_model = None
+        self._agency = None
 
     # -- parts built on demand ---------------------------------------------
+
+    @property
+    def agency(self):
+        """The part that decides rather than answers (:mod:`neuralmind.agency`).
+
+        Built on demand and sharing the kernel's autonomy gate, so a grant
+        made through :meth:`grant` reaches planning without being passed
+        anywhere, and stakes inferred from observations lower what a plan may
+        do by itself.
+        """
+        if self._agency is None:
+            from .agency import Agency
+
+            self._agency = Agency(gate=self.kernel.autonomy)
+        return self._agency
 
     @property
     def perceptor(self):
@@ -328,6 +344,31 @@ class Mind:
     def decide(self, action: str, needs: int = 2, confirmed: bool = False):
         """Put an action through the autonomy gate. Nothing reaches a host unchecked."""
         return self.kernel.decide(action, needs, confirmed)
+
+    def learn_actions(self, source: str) -> "Mind":
+        """Take on what can be done, as distinct from what is true."""
+        self.agency.learn_actions(source)
+        return self
+
+    def plan(self, goal, confirmed: Iterable[str] = ()):
+        """Work out what to do about ``goal``, and how much may be done alone.
+
+        Returns a :class:`~neuralmind.agency.Choice`: the plan, a proof for
+        why each step is needed, one brief line, and the autonomy gate's
+        verdict on every step. A plan is a proposal -- what may actually
+        happen is the separate question this answers alongside it.
+        """
+        self.agency.observe(self._world_facts())
+        return self.agency.decide(goal, confirmed=confirmed)
+
+    def _world_facts(self):
+        """What the mind currently believes, as ground facts for planning.
+
+        Drawn from the knowledge base rather than kept in a second place: a
+        planner reasoning over its own private copy of the world is a planner
+        that will eventually disagree with the answers.
+        """
+        return [record.atom for record in self.knowledge.facts if record.atom.is_ground]
 
     def grant(self, level: int) -> "Mind":
         """Set the autonomy ceiling. Only a host does this."""

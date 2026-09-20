@@ -92,6 +92,40 @@ switch. `SelfModel` holds the mind's facts about itself in the same vocabulary
 as everything else, which is the whole of what "self-awareness" means here and
 why it is testable.
 
+## 0e2. Deciding (`neuralmind/agency/`, `neuralmind/envs/`)
+
+An action says what it needs and what it changes; everything else is derived.
+Which predicates are fluents is read off the effects, so nothing declares what
+changes. Effects may name only the action's own parameters, which is stricter
+than ordinary rule safety and has to be: an effect is attributed to the action
+happening, so the action term must carry what it affects.
+
+Planning is clingo, incrementally, one step of horizon at a time. Three
+outcomes stay apart -- a plan, no plan *of this length*, and out of time --
+because collapsing the last two lets a planner claim a search space is empty
+when it only ran out of patience. What clingo returns is then replayed through
+the action definitions on the Python engine, so the two engines have to agree
+about what the plan achieves.
+
+Each step carries its **causal links**: what it produces, and which later step
+or which part of the goal consumes it. Links come from simulating the plan, so
+they cannot disagree with it, and a step nothing depends on is reported rather
+than shipped. Links also cover the two cases a naive reading misses -- a step
+that only *removes* something a later step needs absent, and a step that
+achieves a derived fact it never literally adds.
+
+`Agency` puts every step through the kernel's autonomy gate before returning
+it, with the level each step needs **inferred from whether the library can undo
+it**. Nothing declares which actions are dangerous; the mind reads its own
+action library and looks for a way back.
+
+`neuralmind/envs/` is translation only: a grid or a text world becomes facts,
+an instruction becomes a rule, a step becomes whatever the environment accepts.
+Deciding stays in `agency/`, which is why a second environment was short rather
+than a rewrite. `agency/learn.py` watches attempts and works out the
+preconditions the model left out, lifting candidates onto the action's own
+arguments so the conclusion is about the action rather than about the room.
+
 ## 0f. The school (`neuralmind/school/`)
 
 `neuralmind school` is one command that reproduces every number this project

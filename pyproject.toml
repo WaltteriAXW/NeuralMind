@@ -38,6 +38,9 @@ specialists = ["z3-solver>=4.12", "pint>=0.20", "networkx>=3.0"]
 # Neither is imported anywhere else; without them those stages report
 # themselves unavailable rather than being absent.
 games = ["minigrid>=2.3", "textworld>=1.6"]
+# Planning searches, so it needs the search engine. The Python engine
+# derives; it deliberately does not choose.
+agency = ["clingo>=5.6"]
 dev = [
   "pytest>=7.0", "numpy>=1.23", "rdflib>=6.0",
   "z3-solver>=4.12", "pint>=0.20", "networkx>=3.0",

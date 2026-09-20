@@ -19,10 +19,10 @@ one passes. A blocked stage says which stage blocked it.
 
 **It says what it cannot do.** A stage that cannot run reports *why* -- a
 dataset not downloaded, a dependency missing, an environment not reachable
-from this machine -- rather than being absent. Five of the roadmap's stages
-are in that state today and all five are listed, because a curriculum that hides
-what it cannot reach reports a smaller, better-looking mind than the one that
-exists.
+from this machine -- rather than being absent. Three of the roadmap's stages
+are in that state today and all three are listed, because a curriculum that
+hides what it cannot reach reports a smaller, better-looking mind than the one
+that exists.
 
 **Every failure has exactly one attribution.** Seven categories in priority
 order; see :mod:`neuralmind.school.attribution` for why the order is the

@@ -591,6 +591,81 @@ def _run_mnist(quick: bool):
     )
 
 
+# -- 11. carrying out an instruction --------------------------------------
+
+
+@_timed("babyai", 90.0, "% solved")
+def _run_babyai(quick: bool):
+    """The lowest of the three required levels, not the average.
+
+    An average lets a strong level carry a weak one, and the roadmap's bar is
+    per level: GoTo *and* PickUp *and* Open. Reporting the worst is the only
+    figure that means what the bar says.
+    """
+    from benchmarks.bench_babyai import measure
+
+    episodes = 40 if quick else 150
+    results = [
+        measure(level, episodes=episodes, view="agent")
+        for level in ("goto", "pickup", "open")
+    ]
+    worst = min(results, key=lambda r: r.rate)
+    attributions = []
+    for result in results:
+        for reason, count in result.reasons.items():
+            evidence = (
+                Evidence(out_of_budget=True)
+                if "budget" in reason or "out of steps" in reason
+                else Evidence(rules_stalled=True)
+            )
+            attributions += [attribute(evidence) for _ in range(count)]
+
+    detail = ", ".join(f"{r.level} {r.rate:.0f}%" for r in results)
+    return (
+        worst.rate,
+        f"{episodes} episodes per level, agent's own view; {detail}",
+        attributions,
+        {
+            "episodes": episodes,
+            "levels": {r.level: r.to_dict() for r in results},
+            "replans_per_episode": round(
+                sum(r.replans for r in results) / len(results), 3
+            ),
+        },
+    )
+
+
+@_timed("textworld", 90.0, "% won")
+def _run_textworld(quick: bool):
+    """Played twice: with a correct action model, and with a broken one.
+
+    The reported number is the *broken* one, because that is the harder
+    claim. A planner that wins when it is told the rules is a planner; one
+    that wins when it is told the rules wrongly, and comes out knowing which
+    rule was wrong, is the milestone.
+    """
+    from benchmarks.bench_textworld import measure
+
+    games = 8 if quick else 30
+    given = measure(games=games, naive=False)
+    naive = measure(games=games, naive=True)
+
+    attributions = [
+        attribute(Evidence(rules_stalled=True))
+        for _ in range(naive.games - naive.won)
+    ]
+    return (
+        naive.rate,
+        (
+            f"{games} generated games; with the model given, {given.rate:.0f}%; "
+            f"with a condition missing, {naive.rate:.0f}% and "
+            f"{naive.correct_lessons} game(s) ended knowing what was missing"
+        ),
+        attributions,
+        {"games": games, "given": given.to_dict(), "naive": naive.to_dict()},
+    )
+
+
 # -- the curriculum --------------------------------------------------------
 
 
@@ -731,17 +806,17 @@ CURRICULUM: tuple[Stage, ...] = (
     ),
     Stage(
         name="babyai",
-        about="grid worlds with English instructions",
+        about="English instructions carried out, with an explained plan",
         check=_needs("minigrid", "games"),
-        run=lambda quick: Result("babyai", UNAVAILABLE),
+        run=_run_babyai,
         after=("where-am-i",),
         milestone="P2.7",
     ),
     Stage(
         name="textworld",
-        about="generated text adventures",
+        about="a world unlike the grid, and a wrong action model corrected",
         check=_needs("textworld", "games"),
-        run=lambda quick: Result("textworld", UNAVAILABLE),
+        run=_run_textworld,
         after=("babyai",),
         milestone="P2.7",
     ),
