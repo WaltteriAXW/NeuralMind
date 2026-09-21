@@ -666,6 +666,129 @@ def _run_textworld(quick: bool):
     )
 
 
+# -- 12. drafting a module for a domain nothing covers --------------------
+
+
+@_timed("build-a-module", 100.0, "% of held-out")
+def _run_builder(quick: bool):
+    """Two domains and a wrong answer.
+
+    The score is the held-out set on the pump station: questions never in the
+    log, half of them negatives, because a builder that calls everything a
+    quantity does well on a set with no negatives. The other two bars are
+    pass/fail and go in the detail -- a model that plays, and a confirmed
+    answer that the world later contradicts.
+    """
+    from ..agency import Agency, parse_actions
+    from ..builder import YES, Builder
+    from ..builder.pack import score
+    from ..builder.stations import (
+        HELD_OUT,
+        PumpStation,
+        Vault,
+        pump_station_log,
+        vault_log,
+    )
+
+    records = 200 if quick else 400
+    pump = Builder.from_log(pump_station_log(steps=records), name="pump_station")
+    pump.step()
+    right, total, wrong = score(pump.pack(), HELD_OUT)
+
+    attributions = [
+        attribute(Evidence(missing_fact=str(query)))
+        for query, _, _ in wrong
+    ]
+
+    # The second bar: a game no pack covers, planned and then actually played.
+    played = False
+    try:
+        vault = Builder.from_log(vault_log(steps=600), name="vault")
+        vault.step()
+        agency = Agency().learn_actions(parse_actions(vault.pack().actions_lp()))
+        agency.gate.grant(3)
+        agency.observe(["holding(nothing)", "door(locked)", "lamp(off)"])
+        choice = agency.decide("inside")
+        if choice.found:
+            room = Vault(99)
+            for step in choice.plan:
+                room.apply(step.name.split("_when_")[0])
+            played = room.inside
+    except Exception:  # a stage that cannot do it has not done it
+        played = False
+
+    caught = _wrong_answer_caught()
+
+    if not played:
+        attributions.append(attribute(Evidence(rules_stalled=True)))
+    if not caught:
+        attributions.append(attribute(Evidence(gold_disagrees=True)))
+
+    metric = 100.0 * right / total if total else 0.0
+    if not (played and caught):
+        metric = min(metric, 89.0)  # a bar missed is a bar missed
+
+    return (
+        metric,
+        (
+            f"{right}/{total} held-out on a domain no pack covers; "
+            f"game model {'plays' if played else 'DOES NOT PLAY'}; "
+            f"a wrong answer {'is' if caught else 'is NOT'} caught later"
+        ),
+        attributions,
+        {
+            "held_out": [right, total],
+            "questions_asked": pump.interview.asked,
+            "outstanding": len(pump.interview),
+            "game_plays": played,
+            "wrong_answer_caught": caught,
+            "completeness": round(pump.pack().completeness(), 3),
+        },
+    )
+
+
+def _wrong_answer_caught() -> bool:
+    """Confirm something a short log made look unconditional, then watch."""
+    from ..builder import YES, Builder
+    from ..builder.stations import PumpStation
+
+    calm = [
+        "close_valve_b", "start_pump_a", "start_pump_a", "start_pump_a",
+        "start_pump_a", "open_valve_b", "open_valve_b", "open_valve_b",
+        "open_valve_b", "reset_alarm",
+    ]
+
+    def drive(station, commands, log):
+        for command in commands:
+            before = station.snapshot()
+            station.apply(command)
+            record = dict(before)
+            record["action"] = command
+            log.append(record)
+
+    station = PumpStation(0)
+    log: list = []
+    for _ in range(4):
+        drive(station, calm, log)
+    log.append(station.snapshot())
+
+    builder = Builder.from_log(log, name="pump_station").step()
+    key = "effect:reset_alarm:alarm"
+    if not any(q.key == key for q in builder.interview.pending):
+        return False
+    builder.answer(key, YES)
+
+    later: list = []
+    drive(
+        station,
+        ["close_valve_b"] + ["start_pump_a"] * 4 + ["reset_alarm"] * 2,
+        later,
+    )
+    later.append(station.snapshot())
+    reopened = builder.observe(later)
+    return any(q.key == key and q.reopened for q in reopened)
+
+
 # -- the curriculum --------------------------------------------------------
 
 
@@ -823,8 +946,8 @@ CURRICULUM: tuple[Stage, ...] = (
     Stage(
         name="build-a-module",
         about="a domain no pack covers, drafted from observations",
-        check=_never("the module builder is P2.8 and is not built"),
-        run=lambda quick: Result("build-a-module", UNAVAILABLE),
+        check=_always,
+        run=_run_builder,
         after=("where-am-i",),
         milestone="P2.8",
     ),

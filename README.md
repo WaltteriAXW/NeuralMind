@@ -348,6 +348,7 @@ neuralmind eval -n 100   # Phase 7: accuracy with failure attribution
 | — | *Phase Two, P2.3:* growing by asking | family relations incl. recursive `ancestor` learned in **11%** of random's questions |
 | — | *Phase Two, P2.4:* never told where it is | **9 unlabelled hosts** read correctly; stakes raised before any domain is recognised |
 | — | *Phase Two, P2.7:* decides, not just answers | BabyAI GoTo/PickUp/Open **100%** each with explained plans; TextWorld **30/30**, and **30/30** again with a condition removed from its action model |
+| — | *Phase Two, P2.8:* no pack fits, so draft one | **23/23** held-out on a domain nothing covers; a game model drafted from random button-pressing **plans a route and the plan works** |
 | — | *Phase Two, P2.13:* one command reproduces every number | **10 stages pass** their targets, 5 declared unavailable with reasons; see below |
 
 Every row is asserted in `tests/test_roadmap_phases.py`, so a regression that
@@ -417,6 +418,68 @@ and comes out of the game knowing `take_from also needs opened(C)`.
 
 `examples/13_deciding_not_just_answering.py` walks through all of it.
 
+## No pack fits? Draft one
+
+```bash
+neuralmind pack new --from-observations log.jsonl --out packs
+```
+
+Hand it a log of a host being operated — no schema, no documentation, no
+types — and it works out what the things are, what each command does, and what
+explains the alarm:
+
+```
+New module "pump_station" — 50% complete
+  ✔ 2 state(s): pump_a (idle/running), valve_b (closed/open)
+  ✔ 2 quantity/quantities with units: flow in l/min, pressure in bar
+  ✔ 5 of 5 action(s) modelled
+  ✘ pressure: moves under every command, never to a value the log explains
+  ✘ alarm: explained 51% of the time
+  ✘ licence: nobody has said what this pack may be used under
+  next: close_valve_b set flow to 0 l/min in 17 of the 17 case(s) where it
+        was not already. Is that its effect? [yes / no]
+```
+
+Everything carries the counting that produced it, because a draft nobody can
+argue with is a draft nobody can correct. Where the log does not settle
+something it says so — `pressure` drifts by an amount no command determines,
+and proposing "sets pressure to 3.2 bar" because that happened most often
+would be making something up.
+
+Nothing derives the alarm, so a rule is induced for it, and the rule is an
+**implication rather than an equivalence**: *whenever pressure is above 3.1 bar
+the alarm is on, with no counterexample — but that explains only 51% of the
+records where it was on.* The alarm stays on after the pressure falls, and a
+learner that rounded past those cases would have produced a rule that is wrong
+in exactly the situation an alarm exists for.
+
+The concept that finding invented then earns its place on something else. The
+log has no field meaning "the pressure is low enough", so `reset_alarm`'s
+condition was unsayable — until `high_pressure` existed:
+
+```
+reset_alarm set alarm to False in 8 of the 8 case(s) where high_pressure was
+            False and it was not already
+```
+
+**An answer is a claim.** Confirm something a calm log made look
+unconditional, and when the world later shows it failing the question comes
+back with the record attached — the builder does not overrule the person, and
+the person does not overrule the log.
+
+| | Result |
+|---|---|
+| Held-out questions on a domain no pack covers | **23/23** (half of them negatives) |
+| A small game, drafted from random button-pressing | the model **plans a 5-step route into the vault, and the plan works in the room** |
+| A wrong answer, later contradicted | **caught**, and asked again |
+
+The pack lands as files somebody can read and edit, with `status = "proposed"`
+and no way to set it otherwise. It loads into the kernel's sandbox, answers
+nothing, and is promoted only when its tests pass, every core canary still
+agrees, and a person approves **by name**.
+
+`examples/14_no_pack_fits_build_one.py` runs all of it.
+
 ## Reproducing all of it: the school
 
 ```bash
@@ -428,7 +491,7 @@ An ordered curriculum of fifteen stages, each carrying the target it must beat,
 each gated on the ones before it:
 
 ```
-curriculum: 12 passed, 0 failed, 3 unavailable, 0 blocked (quick, 89s)
+curriculum: 13 passed, 0 failed, 2 unavailable, 0 blocked (quick, 115s)
 
   proofwriter-cwa            ok      100.0% (need 99.9%)  1,408/1,408 questions, 0 engine failure(s)
   proofwriter-owa            ok      100.0% (need 99.9%)  1,456 questions, 45% of gold answers are unknown
@@ -440,10 +503,9 @@ curriculum: 12 passed, 0 failed, 3 unavailable, 0 blocked (quick, 89s)
   where-am-i                 ok      100.0% (need 100.0%)  9 unlabelled hosts
   context-drift              ok      100.0% (need 100.0%)  noticed the host change after 4 observation(s)
   mnist-weak-supervision     ok       97.5% (need 95.0%)  2,000 digits, from a model trained with no digit labels at all
-  babyai                     ok   100.0% solved (need 90.0% solved)  goto 100%, pickup 100%, open 100%
-  textworld                  ok   100.0% won (need 90.0% won)  with a condition missing from the action model, 100%
   babi                       —        unavailable: no reachable mirror of the bAbI tasks
   ...
+
 
 failures by cause, most upstream first:
   perception              272   the text layer extracted the wrong symbols
@@ -451,7 +513,7 @@ failures by cause, most upstream first:
 
 Three things it does that the test suite does not. It **gates**, so a NatLang
 score from a mind that cannot do generated ProofWriter is never reported. It
-**says what it cannot do** — three stages appear precisely because they cannot
+**says what it cannot do** — two stages appear precisely because they cannot
 run, with the reason for each. And every failure gets **exactly one
 attribution**, from seven categories in upstream-first order, so a question that
 timed out is counted as a budget failure and not also as a missing rule.

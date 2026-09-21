@@ -19,10 +19,206 @@ with no test is not done, whatever the code says.
 | P2.5 — Language that grows | Widen perception by correction | not started |
 | P2.6 — Background knowledge as defaults | The obvious facts text never states | not started |
 | P2.7 — Action, time and goals | Decide, not just answer | **done** |
-| P2.8 — Guided module building | No pack fits? Draft one | not started |
+| P2.8 — Guided module building | No pack fits? Draft one | **done** |
 | P2.9–P2.12 — Facets, packs, vision | Reusable building blocks | not started |
 | P2.13 — The school | One command reproduces every number | **done** |
 | P2.14 — Packs and release | Drop it into new software | not started |
+
+## P2.8 — no pack fits, so draft one
+
+P2.4 taught the mind to say "I do not recognise this host" and to name the
+words it could not place. This is what happens next. It is handed a log of a
+pump station being operated — no schema, no documentation, no types — and
+works out what the things are, what each command does, and what explains the
+alarm.
+
+### What it comes to
+
+| Bar (from the roadmap) | Result |
+|---|---|
+| A log from a domain no pack covers produces a pack that answers a held-out question set | **23/23**, after **0** developer questions |
+| The same process on a small game produces a playable action model | the drafted model plans a 5-step route into the vault, **and the plan works in the room** |
+| A deliberately wrong answer is caught later by a contradiction, and asked again | **caught** — the claim is dropped and the question comes back with the record attached |
+
+The held-out set is half negatives on purpose. A builder that calls
+everything a quantity scores well on a set with no negatives in it, so `tick
+is a quantity` → false and `pump_a has values on and off` → false are in
+there alongside the positives.
+
+### Read from behaviour, not from a type
+
+Every reading comes from how values move, and carries what it was read from:
+
+```
+121 record(s), 7 field(s), 5 the facets do not explain
+  alarm: flag, changes
+  commands: commands (start_pump_a, stop_pump_a, open_valve_b, ...), fixed
+  flow: quantity in l/min, changes — already covered by quantities
+  pressure: quantity in bar, changes — already covered by quantities
+  pump_a: state (idle, running), changes
+  tick: counter, changes
+  valve_b: state (closed, open), changes
+```
+
+`tick` and `pressure` are both numbers, and only one of them is a
+measurement — the difference is that a tick goes up by one in step with the
+records, and a schema that calls it a quantity invites questions about its
+units. `commands` is a command list rather than a list of words because its
+entries turn up as the actions that were taken. None of that is in the types.
+
+### Counting, and saying where counting stops
+
+```
+open_valve_b set valve_b to open in 31 of the 31 case(s) where it was not already
+open_valve_b set flow to 12 l/min in 15 of the 15 case(s) where pump_a was
+             running and it was not already
+pressure moved, but nothing in the log says when
+```
+
+Three outcomes, kept apart because they mean different things to whoever
+confirms them: **always**, **sometimes and here is when**, and **sometimes and
+I cannot say**. Pressure is the honest third case — it drifts by an amount no
+single command determines, and a builder that proposed "sets pressure to 3.2
+bar" because that happened most often would be making something up.
+
+Counting over **opportunities** rather than over every case is what makes the
+second row possible at all. A command that ran fifty times while the alarm was
+already off did not switch the alarm off fifty times, and including those cases
+puts their irrelevant variation into the pool a condition is searched over,
+where it hides the condition that was really there.
+
+### A concept invented to explain one thing, earning its place on another
+
+Nothing derives the alarm, so a rule is induced for it — narrowly, as a
+threshold, because a general learner over a log this size finds something for
+every flag and most of it is coincidence dressed as a law:
+
+```
+whenever pressure is above 3.1 bar, alarm is on (26 records, no counterexamples),
+but that explains only 51% of the 51 records where alarm was on
+```
+
+An implication, not an equivalence, and the difference is the honest part: the
+alarm stays on after the pressure falls, so no threshold explains all of it,
+and a learner that rounded past those cases would have produced a rule that is
+wrong in exactly the situation an alarm exists for.
+
+The threshold is then **given a name**, and the name goes back into the action
+learning. `reset_alarm`'s condition was not expressible before — the log has no
+field meaning "the pressure is low enough" — and afterwards it is:
+
+```
+reset_alarm set alarm to False in 8 of the 8 case(s) where high_pressure was
+            False and it was not already
+```
+
+A learned concept explaining a *second* thing is the strongest evidence a log
+can offer that it is real.
+
+### An answer is a claim
+
+This is the third bar, and the reason the interview is not just a prompt list.
+From a log where `reset_alarm` only ever happened while the pressure was low it
+looks unconditional, and somebody confirms it. Then the world shows it failing:
+
+```
+reset_alarm set alarm to False in 4 of 4 cases... Is that its effect? [yes / no]
+    (you said yes before; record 46: reset_alarm left alarm at True, not False
+     — 2 record(s) disagree)
+```
+
+The builder does not overrule the person and the person does not overrule the
+log. The claim is dropped, the question comes back with the record attached,
+and a revised proposal beside it. A developer who meant it can say so again,
+with the counterexample in front of them.
+
+### The pack, and what it is not allowed to claim
+
+```
+packs/pump_station/
+├── pack.toml             status = "proposed", never anything else
+├── context_profile.lp    what said this was the host this pack is for
+├── schema.lp             what things are, each line saying what it was read from
+├── rules.lp              learned, with the scaling written beside the number
+├── actions.lp            the planner's own format, so it is playable at once
+├── lexicon.json
+├── BUILD_NOTES.md        what is settled, what is not, the next question
+└── tests/                every confirmed answer, as a regression test
+```
+
+The draft loads into the kernel's **sandbox**, where it answers nothing, and is
+promoted only when its own tests pass, every core canary still agrees with the
+draft loaded, and a person approves *by name* — `promote()` refuses an empty
+approver, because a pack drafted from a log is a proposal about somebody else's
+domain.
+
+```bash
+neuralmind pack new --from-observations log.jsonl --out packs
+:bootstrap log.jsonl     :ask yes     :pack status     :pack promote <name>
+```
+
+### Conditional effects, compiled
+
+P2.7's action language has no conditional effects, and hoisting a condition
+onto the whole command would be a lie — `open_valve_b` opens the valve whether
+or not the pump is running, and moves fluid only sometimes. So a conditional
+effect becomes its own variant, which is how conditional effects compile into
+an action language that has none:
+
+```
+action open_valve_b():
+    causes valve_b(open)
+
+action open_valve_b_when_pump_a_running():
+    needs  pump_a(running)
+    causes valve_b(open), flow(12)
+```
+
+Both halves stay true, and the result parses as a library the planner accepts.
+
+### What it cost to get right
+
+- **A denominator that included cases with nothing to do.** The single change
+  that turned "8 of 47, unexplained" into "8 of 8, when the valve is open".
+- **Derived concepts proposed as effects.** `stop_pump_a sets high_pressure to
+  false` states the consequence and hides the cause.
+- **Conditions on continuous quantities.** With a dozen distinct values, "only
+  when pressure is 3.2 bar" is always available and almost always an accident.
+  The fix is behavioural, not typed: a quantity with more than a handful of
+  values is not something a command *sets*.
+- **The field being changed could not be its own condition.** That rules out
+  most preconditions there are — "open_door works when the door was shut" is
+  the normal shape — but spending one of two condition slots on it leaves a
+  command needing a key *and* a light unlearnable. It is taken first and not
+  counted against the two.
+- **Two blocks with the same name is not a library, it is a parse error**
+  waiting for whoever loads the pack. Effects sharing a condition are one
+  variant.
+- **`inside(true)` as an effect and `not inside` as a condition** are two
+  predicates that happen to share a name, and the planner would never connect
+  them.
+- **The fixture lied.** The vault log reset the room between a command and its
+  result, so it read as `go_in` putting the key down and turning the lamp off.
+  A fixture that lies to the thing it is testing is worse than no fixture.
+- **Rechecking inside `step()` consumed its own result.** The contradiction was
+  found and handled before the caller that asked for it ever looked.
+
+### What P2.8 does not do
+
+- **No embedding clusters.** The roadmap groups unfamiliar vocabulary with
+  sentence embeddings and GLiNER types; neither model is reachable from this
+  machine. Fields are grouped by behaviour instead — which move together, which
+  share a value vocabulary — which is weaker at naming concepts and much easier
+  to check.
+- **Units are checked against pint, not QUDT.** Same reason: pint is installed.
+- **Rules are thresholds only.** A flag against a quantity. Anything richer is
+  the induction layer's job and is not wired in here.
+- **Preconditions of a *failed* command are not learned here.** The builder
+  reports "27 cases changed nothing — something stops it", and P2.7's learner is
+  what turns that into a precondition.
+- **The pack is not loaded automatically.** `context_profile.lp` records what
+  identified the host, but nothing yet matches a new host against the profiles
+  of proposed packs. That is P2.14's.
 
 ## P2.7 — deciding, not just answering
 
@@ -226,7 +422,7 @@ neuralmind school --full     # every question and 10,000 fuzz inputs
 ### The quick pass
 
 ```
-curriculum: 12 passed, 0 failed, 3 unavailable, 0 blocked (quick, 89s)
+curriculum: 13 passed, 0 failed, 2 unavailable, 0 blocked (quick, 115s)
 
   proofwriter-cwa            ok      100.0% (need 99.9%)  1,408/1,408 questions, 0 engine failure(s)
   proofwriter-owa            ok      100.0% (need 99.9%)  1,456 questions, 45% of gold answers are unknown
@@ -240,9 +436,9 @@ curriculum: 12 passed, 0 failed, 3 unavailable, 0 blocked (quick, 89s)
   mnist-weak-supervision     ok       97.5% (need 95.0%)  2,000 digits, from a model trained with no digit labels at all
   babi                       —        unavailable: no reachable mirror of the bAbI tasks
   entailment-bank            —        unavailable: not downloaded; no importer written yet
-  babyai                     ok   100.0% solved (need 90.0% solved)  40 episodes per level, agent's own view; goto 100%, pickup 100%, open 100%
-  textworld                  ok   100.0% won (need 90.0% won)  8 generated games; with the model given, 100%; with a condition missing, 100%
-  build-a-module             —        unavailable: the module builder is P2.8 and is not built
+  babyai                     ok   100.0% solved (need 90.0% solved)  goto 100%, pickup 100%, open 100%
+  textworld                  ok   100.0% won (need 90.0% won)  with a condition missing from the action model, 100%
+  build-a-module             ok   100.0% of held-out (need 100.0% of held-out)  23/23; game model plays; a wrong answer is caught later
 
 failures by cause, most upstream first:
   perception              272   the text layer extracted the wrong symbols
@@ -261,13 +457,12 @@ one passes, and a blocked stage names the stage that blocked it. `unavailable`
 deliberately does *not* block: a missing dataset should not hide a stage that
 would otherwise run.
 
-**It says what it cannot do.** Three stages are listed precisely because they
+**It says what it cannot do.** Two stages are listed precisely because they
 cannot run. A curriculum that omits what it cannot reach reports a smaller,
-better-looking mind than the one that exists — and the reasons are three
-different kinds of problem (no reachable mirror, no importer written, not built
-yet), which is information a silence would throw away. There were five when
-this milestone landed; P2.7 turned two of them into measurements, which is what
-a declared-unavailable stage is for.
+better-looking mind than the one that exists. There were five when this
+milestone landed; P2.7 turned two of them into measurements and P2.8 a third,
+which is exactly what a declared-unavailable stage is for — it names the work,
+and then somebody does it.
 
 **Every failure has exactly one attribution.** Seven categories, and the
 *order* is the design:
@@ -359,9 +554,9 @@ where it measures something else and reports the number anyway.
 
 ### What P2.13 does not do
 
-- **Three stages are declared, not run.** bAbI has no reachable mirror from
-  this machine; EntailmentBank's repo is reachable but has no importer; the
-  module builder is P2.8. (BabyAI and TextWorld were two more until P2.7.)
+- **Two stages are declared, not run.** bAbI has no reachable mirror from this
+  machine; EntailmentBank's repo is reachable but has no importer. (BabyAI and
+  TextWorld were two more until P2.7, and the module builder until P2.8.)
 - **`--full` is not run on every commit.** An hour is too long for that, so the
   quick pass is the gate and the full numbers are reproduced deliberately.
 - **Targets are floors, not contracts.** A stage that beats its target by a

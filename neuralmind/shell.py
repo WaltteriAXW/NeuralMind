@@ -68,6 +68,9 @@ HELP = """
   :questions             what it would need to be told
   :grow [target/arity]   one growth cycle: propose a rule by asking
   :beliefs               what is remembered, and whether it is confirmed
+  :bootstrap <log>       draft a module from an observation log
+  :ask [yes|no]          answer the draft's next question
+  :pack status|write|promote   where the draft has got to
   :expect <atom>         this should follow but does not -- propose fixes
   :wrong <atom>          this follows but should not -- propose fixes
   :accept <n>            apply one of the proposed fixes
@@ -563,6 +566,88 @@ class Shell:
             self._memory = Memory()
         return self._memory
 
+    # -- drafting a module (P2.8) -------------------------------------------
+
+    def cmd_bootstrap(self, argument: str) -> str:
+        """Draft a module from an observation log: ``:bootstrap log.jsonl``."""
+        from pathlib import Path as _Path
+
+        from .builder import Builder
+        from .builder.stations import read_log
+
+        parts = argument.split()
+        if not parts:
+            return (
+                "  :bootstrap <log.jsonl> [name] — draft a module from a log "
+                "of what a host was seen doing"
+            )
+        path = _Path(parts[0])
+        if not path.exists():
+            return f"  no log at {path}"
+        name = parts[1] if len(parts) > 1 else path.stem
+
+        try:
+            log = read_log(path)
+        except Exception as exc:  # a log is somebody else's file
+            return f"  could not read {path}: {exc}"
+        if not log:
+            return f"  {path} has no records in it"
+
+        self.builder = Builder.from_log(log, name=name)
+        self.builder.step()
+        return self.builder.progress()
+
+    def cmd_pack(self, argument: str) -> str:
+        """``:pack status`` | ``:pack write <dir>`` | ``:pack promote <name>``."""
+        builder = getattr(self, "builder", None)
+        if builder is None:
+            return "  nothing drafted yet — :bootstrap a log first"
+
+        parts = argument.split()
+        what = parts[0] if parts else "status"
+
+        if what == "status":
+            return builder.progress()
+        if what == "write":
+            from pathlib import Path as _Path
+
+            root = _Path(parts[1]) if len(parts) > 1 else _Path("packs")
+            folder = builder.write(root)
+            return f"  written to {folder}"
+        if what == "promote":
+            if len(parts) < 2:
+                return (
+                    "  :pack promote <your name> — a drafted pack is a "
+                    "proposal about somebody else's domain, so promoting it "
+                    "is signed"
+                )
+            from .builder.shadow import Shadow
+
+            shadow = Shadow(builder.pack(), self.kernel)
+            shadow.run()
+            return "  " + shadow.promote(approved_by=" ".join(parts[1:]))
+        return f"  :pack status | write <dir> | promote <name>; not {what!r}"
+
+    def cmd_ask(self, argument: str) -> str:
+        """Answer the builder's next question: ``:ask yes`` / ``:ask no``."""
+        builder = getattr(self, "builder", None)
+        if builder is None:
+            return "  nothing drafted yet — :bootstrap a log first"
+        question = builder.interview.next
+        if question is None:
+            return "  nothing outstanding"
+        reply = argument.strip().lower()
+        if not reply:
+            return "  " + question.describe()
+        if reply not in question.options:
+            return f"  answer one of: {', '.join(question.options)}"
+        builder.answer(question.key, reply)
+        following = builder.interview.next
+        settled = f"  noted: {question.text} -> {reply}"
+        if following is None:
+            return settled + "\n  nothing else outstanding"
+        return settled + "\n  next: " + following.describe()
+
     def cmd_gaps(self, argument: str) -> str:
         """What the session could not answer, most-asked first."""
         found = self.gaps.ranked()
@@ -860,6 +945,9 @@ _COMMANDS: dict[str, Callable[[Shell, str], str]] = {
     "expect": Shell.cmd_expect,
     "wrong": Shell.cmd_wrong,
     "accept": Shell.cmd_accept,
+    "bootstrap": Shell.cmd_bootstrap,
+    "pack": Shell.cmd_pack,
+    "ask": Shell.cmd_ask,
 }
 
 

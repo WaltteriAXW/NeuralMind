@@ -126,6 +126,36 @@ than a rewrite. `agency/learn.py` watches attempts and works out the
 preconditions the model left out, lifting candidates onto the action's own
 arguments so the conclusion is about the action rather than about the room.
 
+## 0e3. Drafting a module (`neuralmind/builder/`)
+
+When no pack fits, the mind drafts one from an observation log. Every step
+narrows the next: the facets are subtracted first, so a new pack is small;
+fields are read from how their values *behave* rather than from their types
+(a tick and a pressure are both numbers, and only one is a measurement);
+commands are learned by counting over the **opportunities** they had, not over
+every case they appeared in.
+
+Where the log does not settle something, nothing is proposed. That is the
+design, not a limitation: a drifting quantity gets "moves, never to a value the
+log explains" rather than its modal value dressed up as an effect.
+
+Rules are induced only for what the host reports and nothing derives, narrowly,
+as thresholds — and as **implications, not equivalences**, with coverage
+reported beside soundness. A surviving threshold is then given a name, and the
+name goes back into the action learning: a concept invented to explain one
+thing and earning its place on a second is the strongest evidence a log can
+offer that it is real.
+
+`questions.py` holds the part that makes this more than a schema guesser. An
+answer is a `Claim` with a checker, rechecked against every observation that
+arrives afterwards. A contradicted claim is dropped and its question reopened
+with the record attached — the log is not overruled by an opinion, and the
+opinion is not overruled by the builder.
+
+Output is a pack with `status = "proposed"`, which `shadow.py` loads into the
+kernel's sandbox. It is promoted only when its own tests pass, every core
+canary still agrees with the draft loaded, and a person approves by name.
+
 ## 0f. The school (`neuralmind/school/`)
 
 `neuralmind school` is one command that reproduces every number this project

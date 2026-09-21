@@ -11,6 +11,7 @@
     neuralmind eval     benchmark the pipeline and attribute its failures
                         (--corpus for the real ProofWriter data)
     neuralmind school   run the whole curriculum and write the dashboard
+    neuralmind pack     draft a module from an observation log
     neuralmind verify   re-derive the model with clingo and compare
 """
 
@@ -205,6 +206,45 @@ def _read_regressions(path) -> list:
         return json.loads(path.read_text(encoding="utf-8")).get("regressions", [])
     except Exception:
         return []
+
+
+def cmd_pack(args) -> int:
+    """Draft a module from an observation log, and say where it got to."""
+    from .builder import Builder
+    from .builder.stations import read_log
+
+    if args.what != "new":
+        print(f"neuralmind pack new --from-observations <log.jsonl>", file=sys.stderr)
+        return 2
+    if not args.from_observations:
+        print("--from-observations is required", file=sys.stderr)
+        return 2
+
+    path = args.from_observations
+    if not path.exists():
+        print(f"no log at {path}", file=sys.stderr)
+        return 1
+    log = read_log(path)
+    if not log:
+        print(f"{path} has no records in it", file=sys.stderr)
+        return 1
+
+    name = args.name or path.stem
+    builder = Builder.from_log(log, name=name)
+    builder.step()
+
+    if args.json:
+        from .output.serialize import to_json
+
+        print(to_json(builder.to_dict()))
+        return 0
+
+    print(builder.progress())
+    if args.out is not None:
+        folder = builder.write(args.out)
+        print(f"\nwritten to {folder}")
+        print("Nothing in it is approved: pack.toml says status = \"proposed\".")
+    return 0
 
 
 def cmd_reason(args) -> int:
@@ -498,6 +538,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reason.add_argument("--json", action="store_true")
     reason.set_defaults(func=cmd_reason)
+
+    pack = sub.add_parser(
+        "pack", help="draft a module from an observation log"
+    )
+    pack.add_argument("what", choices=("new",), help="only 'new' for now")
+    pack.add_argument(
+        "--from-observations", type=Path, default=None,
+        help="a JSONL log of what a host was seen doing",
+    )
+    pack.add_argument("--name", default=None, help="what to call the module")
+    pack.add_argument(
+        "--out", type=Path, default=None, help="write the pack under this folder"
+    )
+    pack.add_argument("--json", action="store_true")
+    pack.set_defaults(func=cmd_pack)
 
     school = sub.add_parser(
         "school", help="run the curriculum and write reports/school.json"
